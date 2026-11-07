@@ -1,0 +1,25 @@
+.build/
+.swiftpm/
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+# Finder folder icons and AppleDouble resource forks.
+Icon[[:cntrl:]]
+._*
+*.env
+.env*
+!.env.example
+**/auth*.json
+**/credentials*.json
+**/session*.json
+cookies*.json
+*.log
+*.key
+*.pem
+*.p12
+*.p8
+*.mobileprovision
+VERIFICATION.md
+AGENTS.md

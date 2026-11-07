@@ -1,0 +1,509 @@
+import Foundation
+import Observation
+
+@MainActor @Observable
+public final class ChatStore {
+    public private(set) var conversations: [ChatSummary]
+    public private(set) var messages: [ChatMessage] = []
+    public private(set) var branches: [ChatBranch] = []
+    public private(set) var selectedLeafID: String?
+    public private(set) var selectedConversationID: String?
+    public private(set) var isLoadingHistory = false
+    public private(set) var isLoadingMessages = false
+    public private(set) var isSending = false
+    public private(set) var isThinking = false
+    public private(set) var isUploadingFiles = false
+    public private(set) var isReadingFiles = false
+    public private(set) var draftFiles: [DraftFile] = []
+    public private(set) var isTemporary = false
+    public private(set) var needsReload = false
+    public private(set) var requiresLogin = false
+    public private(set) var hasMoreHistory = false
+    public private(set) var modes = ChatMode.fallback
+    public private(set) var accountName: String?
+    public private(set) var accountImageURL: URL?
+    public private(set) var updatingConversations = Set<String>()
+    public var modeID = "fast"
+    public var search = ""
+    public var draft = ""
+    public var error: DisplayError?
+    public private(set) var recoveryText: String?
+    @ObservationIgnored public var onSendStarted: (() -> Void)?
+    @ObservationIgnored public var onReplyCompleted: ((ReplyCompletion) -> Void)?
+
+    @ObservationIgnored private let service: any GrokServing
+    @ObservationIgnored private var thread: ChatThread?
+    @ObservationIgnored private var drafts: [String: String] = [:]
+    @ObservationIgnored private var fileDrafts: [String: [DraftFile]] = [:]
+    @ObservationIgnored private var uploadedFileIDs: [UUID: String] = [:]
+    @ObservationIgnored private var sendTask: Task<Void, Never>?
+    @ObservationIgnored private var loadGeneration = UUID()
+    @ObservationIgnored private var historyGeneration = UUID()
+    @ObservationIgnored private var nextPageToken: String?
+    @ObservationIgnored private var historyQuery = ""
+    @ObservationIgnored private var consumedPageTokens = Set<String>()
+    @ObservationIgnored private var sessionGeneration = UUID()
+    @ObservationIgnored private var temporaryConversationIDs = Set<String>()
+    @ObservationIgnored private var fileImportGeneration = UUID()
+    private var selectedTitle = L10n.text("New chat")
+
+    public init(service: any GrokServing, conversations: [ChatSummary] = [], nextPageToken: String? = nil) {
+        self.service = service
+        self.conversations = Self.ordered(conversations)
+        self.nextPageToken = nextPageToken
+        self.hasMoreHistory = nextPageToken != nil
+    }
+
+    public var title: String {
+        if isTemporary { return L10n.text("Private conversation") }
+        return conversations.first { $0.id == selectedConversationID }?.title ?? selectedTitle
+    }
+    public var canSend: Bool {
+        !isSending && !isReadingFiles && updatingConversations.isEmpty && !isLoadingMessages && !needsReload && !requiresLogin && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftFiles.isEmpty)
+    }
+    public var canAttachFiles: Bool { !isSending && !isReadingFiles }
+
+    public func importFiles(_ urls: [URL]) async {
+        await importFiles(resolvingURLs: { urls })
+    }
+
+    /// Reserve the draft before asynchronous drop resolution or file reading.
+    public func importFiles(resolvingURLs resolve: @MainActor () async throws -> [URL]) async {
+        guard canAttachFiles else { return }
+        let generation = fileImportGeneration
+        let session = sessionGeneration
+        let remaining = DraftFile.maximumTotalSize - draftFiles.reduce(0) { $0 + $1.data.count }
+        isReadingFiles = true
+        defer { isReadingFiles = false }
+        do {
+            let urls = try await resolve()
+            try Task.checkCancellation()
+            guard generation == fileImportGeneration, session == sessionGeneration else { return }
+            let files = try await Task.detached(priority: .userInitiated) {
+                try DraftFileReader.read(urls, maximumBytes: remaining)
+            }.value
+            try Task.checkCancellation()
+            guard generation == fileImportGeneration, session == sessionGeneration else { return }
+            addFiles(files)
+        } catch {
+            guard !Task.isCancelled, generation == fileImportGeneration, session == sessionGeneration else { return }
+            presentError(error)
+        }
+    }
+
+    /// A separate unsent draft for the global input; it never inherits a reply parent.
+    public func makeNewConversationStore() -> ChatStore {
+        let fresh = ChatStore(service: service, conversations: conversations, nextPageToken: nextPageToken)
+        fresh.modes = modes
+        fresh.modeID = modeID
+        fresh.accountName = accountName
+        fresh.accountImageURL = accountImageURL
+        fresh.temporaryConversationIDs = temporaryConversationIDs
+        fresh.requiresLogin = requiresLogin
+        if requiresLogin { fresh.error = error }
+        return fresh
+    }
+
+    /// Called after starting a quick-input send, preserving the previous workspace's drafts.
+    public func inheritDrafts(from previous: ChatStore) {
+        temporaryConversationIDs.formUnion(previous.temporaryConversationIDs)
+        drafts.merge(previous.drafts) { _, old in old }
+        fileDrafts.merge(previous.fileDrafts) { _, old in old }
+        uploadedFileIDs.merge(previous.uploadedFileIDs) { _, old in old }
+        if !previous.isTemporary {
+            let key = previous.selectedConversationID ?? "__new"
+            drafts[key] = previous.draft
+            fileDrafts[key] = previous.draftFiles
+        }
+    }
+
+    public func addFiles(_ files: [DraftFile]) {
+        guard !isSending else { return }
+        guard (draftFiles + files).reduce(0, { $0 + $1.data.count }) <= DraftFile.maximumTotalSize else {
+            presentError(ClientFailure.filesTooLarge); return
+        }
+        draftFiles += files
+    }
+
+    public func removeFile(_ id: UUID) {
+        guard !isSending else { return }
+        draftFiles.removeAll { $0.id == id }
+        uploadedFileIDs[id] = nil
+    }
+
+    public func refreshHistory(loadMore: Bool = false) async {
+        if loadMore && (isLoadingHistory || nextPageToken == nil || search.trimmingCharacters(in: .whitespacesAndNewlines) != historyQuery) { return }
+        let generation = UUID()
+        historyGeneration = generation
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let token = loadMore ? nextPageToken : nil
+        isLoadingHistory = true
+        defer { if historyGeneration == generation { isLoadingHistory = false } }
+        do {
+            let result = try await service.history(pageToken: token, search: query)
+            try Task.checkCancellation()
+            guard historyGeneration == generation, search.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            var seen = Set<String>()
+            conversations = Self.ordered(((loadMore ? conversations : []) + result.items).filter {
+                !temporaryConversationIDs.contains($0.id) && seen.insert($0.id).inserted
+            })
+            if !loadMore { consumedPageTokens = [] }
+            if let token { consumedPageTokens.insert(token) }
+            nextPageToken = result.nextPageToken
+            // Avoid an infinite "load more" loop if the server repeats a cursor.
+            if let nextPageToken, consumedPageTokens.contains(nextPageToken) { self.nextPageToken = nil }
+            historyQuery = query
+            hasMoreHistory = nextPageToken != nil
+            if let selected = conversations.first(where: { $0.id == selectedConversationID }) { selectedTitle = selected.title }
+        } catch {
+            guard !Task.isCancelled, historyGeneration == generation else { return }
+            presentError(error)
+        }
+    }
+
+    public func loadModes() async {
+        if let result = try? await service.modes(), !result.isEmpty {
+            modes = result
+            if !result.contains(where: { $0.id == modeID }) { modeID = result[0].id }
+        }
+    }
+
+    public func loadProfile() async {
+        let generation = sessionGeneration
+        if let profile = try? await service.profile(), generation == sessionGeneration, !Task.isCancelled {
+            accountName = profile.name
+            accountImageURL = profile.imageURL
+        }
+    }
+
+    public func renameConversation(id: String, title: String) async {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        await updateConversation(id: id) {
+            try await self.service.renameConversation(id: id, title: title)
+        } commit: {
+            if let index = self.conversations.firstIndex(where: { $0.id == id }) { self.conversations[index].title = title }
+            if self.selectedConversationID == id { self.selectedTitle = title }
+        }
+    }
+
+    public func pinConversation(id: String, pinned: Bool) async {
+        await updateConversation(id: id) {
+            try await self.service.pinConversation(id: id, pinned: pinned)
+        } commit: {
+            if let index = self.conversations.firstIndex(where: { $0.id == id }) { self.conversations[index].isPinned = pinned }
+            self.conversations = Self.ordered(self.conversations)
+        }
+    }
+
+    public func deleteConversation(id: String) async {
+        await updateConversation(id: id) {
+            try await self.service.deleteConversation(id: id)
+        } commit: {
+            if self.selectedConversationID == id { self.select(nil) }
+            self.drafts[id] = nil
+            self.fileDrafts[id] = nil
+            self.conversations.removeAll { $0.id == id }
+        }
+    }
+
+    public func shareConversation(id: String, responseID: String? = nil) async -> URL? {
+        guard !isSending, !requiresLogin, responseID?.isEmpty != true,
+              !temporaryConversationIDs.contains(id), !(isTemporary && id == selectedConversationID),
+              id == selectedConversationID || conversations.contains(where: { $0.id == id }),
+              updatingConversations.insert(id).inserted else { return nil }
+        let generation = sessionGeneration
+        defer { updatingConversations.remove(id) }
+        do {
+            let leafID: String
+            if let responseID {
+                leafID = responseID
+            } else {
+                // Resolve a history row independently of the currently displayed chat.
+                let loaded = try await service.thread(id: id)
+                try Task.checkCancellation()
+                guard generation == sessionGeneration, !requiresLogin else { return nil }
+                guard let last = try loaded.path().last else { throw ClientFailure.emptyConversation }
+                leafID = last.id
+            }
+            let url = try await service.shareConversation(id: id, responseID: leafID)
+            try Task.checkCancellation()
+            guard generation == sessionGeneration else { return nil }
+            return url
+        } catch {
+            guard !Task.isCancelled, generation == sessionGeneration else { return nil }
+            presentError(error)
+            return nil
+        }
+    }
+
+    private func updateConversation(id: String, request: () async throws -> Void, commit: () -> Void) async {
+        guard !isSending, !requiresLogin, !temporaryConversationIDs.contains(id), !(isTemporary && id == selectedConversationID),
+              id == selectedConversationID || conversations.contains(where: { $0.id == id }), updatingConversations.insert(id).inserted else { return }
+        let generation = sessionGeneration
+        defer { updatingConversations.remove(id) }
+        do {
+            try await request()
+            try Task.checkCancellation()
+            guard generation == sessionGeneration else { return }
+            // A history request started before this update must not restore stale metadata.
+            historyGeneration = UUID()
+            isLoadingHistory = false
+            commit()
+        } catch {
+            guard !Task.isCancelled, generation == sessionGeneration else { return }
+            presentError(error)
+        }
+    }
+
+    private static func ordered(_ chats: [ChatSummary]) -> [ChatSummary] {
+        chats.enumerated().sorted {
+            if $0.element.isPinned != $1.element.isPinned { return $0.element.isPinned }
+            let a = $0.element.modifiedAt ?? .distantPast, b = $1.element.modifiedAt ?? .distantPast
+            return a == b ? $0.offset < $1.offset : a > b
+        }.map(\.element)
+    }
+
+    public func select(_ id: String?) {
+        guard !isSending, id != selectedConversationID || isTemporary,
+              id.map({ !temporaryConversationIDs.contains($0) }) ?? true else { return }
+        if !isTemporary {
+            drafts[selectedConversationID ?? "__new"] = draft
+            fileDrafts[selectedConversationID ?? "__new"] = draftFiles
+        }
+        isTemporary = false
+        selectedConversationID = id
+        selectedTitle = conversations.first(where: { $0.id == id })?.title ?? (id == nil ? L10n.text("New chat") : L10n.text("Chat"))
+        draft = drafts[id ?? "__new"] ?? ""
+        draftFiles = fileDrafts[id ?? "__new"] ?? []
+        clearThread()
+    }
+
+    public func newChat() {
+        guard !isSending else { return }
+        if isTemporary {
+            selectedConversationID = nil
+            draft = ""
+            draftFiles = []
+            clearThread()
+            return
+        }
+        if selectedConversationID != nil { select(nil) }
+        else { clearThread() }
+    }
+
+    public func setTemporary(_ enabled: Bool) {
+        guard !isSending, updatingConversations.isEmpty, enabled != isTemporary else { return }
+        let wasEmpty = selectedConversationID == nil && messages.isEmpty
+        let unsent = draft
+        let unsentFiles = draftFiles
+        if !isTemporary {
+            drafts[selectedConversationID ?? "__new"] = draft
+            fileDrafts[selectedConversationID ?? "__new"] = draftFiles
+        }
+        isTemporary = enabled
+        selectedConversationID = nil
+        selectedTitle = L10n.text("New chat")
+        if enabled {
+            draft = wasEmpty ? unsent : ""
+            draftFiles = wasEmpty ? unsentFiles : []
+            if wasEmpty { drafts["__new"] = nil; fileDrafts["__new"] = nil }
+        } else {
+            draft = drafts["__new"] ?? ""
+            draftFiles = fileDrafts["__new"] ?? []
+        }
+        clearThread()
+    }
+
+    private func clearThread() {
+        fileImportGeneration = UUID()
+        loadGeneration = UUID()
+        isLoadingMessages = false
+        thread = nil
+        messages = []
+        branches = []
+        selectedLeafID = nil
+        needsReload = selectedConversationID != nil
+        if !requiresLogin { error = nil }
+        recoveryText = nil
+    }
+
+    public func loadSelectedConversation() async {
+        await loadSelectedConversation(allowDuringSend: false)
+    }
+
+    private func loadSelectedConversation(allowDuringSend: Bool) async {
+        guard !isTemporary, let id = selectedConversationID, !isSending || allowDuringSend else { return }
+        let generation = UUID()
+        loadGeneration = generation
+        isLoadingMessages = true
+        needsReload = true
+        defer { if loadGeneration == generation { isLoadingMessages = false } }
+        do {
+            let loaded = try await service.thread(id: id)
+            try Task.checkCancellation()
+            guard selectedConversationID == id, loadGeneration == generation else { return }
+            if allowDuringSend, let selectedLeafID,
+               !loaded.responses.contains(where: { $0.id == selectedLeafID }) {
+                throw ClientFailure.interruptedReply
+            }
+            let preferred = loaded.branches.contains { $0.id == selectedLeafID } ? selectedLeafID : nil
+            let path = try loaded.path(to: preferred)
+            thread = loaded
+            messages = path
+            branches = loaded.branches
+            selectedLeafID = path.last?.id
+            needsReload = false
+            if !requiresLogin { error = nil }
+            recoveryText = nil
+        } catch {
+            guard !Task.isCancelled, selectedConversationID == id, loadGeneration == generation else { return }
+            presentError(error)
+        }
+    }
+
+    public func selectBranch(_ id: String) {
+        guard !isSending, let thread else { return }
+        do {
+            messages = try thread.path(to: id)
+            selectedLeafID = id
+        } catch { presentError(error) }
+    }
+
+    public func send() {
+        guard canSend else { return }
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let files = draftFiles
+        let conversationID = selectedConversationID
+        let parentID = messages.last?.id
+        let mode = modeID
+        let temporary = isTemporary
+        let generation = sessionGeneration
+        let userID = UUID().uuidString
+        let assistantID = UUID().uuidString
+        draft = ""
+        draftFiles = []
+        if !temporary { drafts[conversationID ?? "__new"] = ""; fileDrafts[conversationID ?? "__new"] = nil }
+        error = nil
+        recoveryText = nil
+        isSending = true
+        isUploadingFiles = !files.isEmpty
+        isThinking = files.isEmpty
+        onSendStarted?()
+        messages.append(ChatMessage(id: userID, parentID: parentID, role: .user, text: text, createdAt: Date(),
+                                   attachments: files.map { MessageAttachment(id: $0.id.uuidString, name: $0.name, url: nil, kind: .file) }))
+        messages.append(ChatMessage(id: assistantID, parentID: userID, role: .assistant, text: "", createdAt: Date()))
+        sendTask = Task { [weak self] in
+            guard let self else { return }
+            defer { isSending = false; isThinking = false; isUploadingFiles = false; sendTask = nil }
+            var finalReceived = false
+            var serverResponseID = ""
+            var finalEvent: ReplyEvent?
+            var replyStarted = false
+            do {
+                var fileIDs: [String] = []
+                for file in files {
+                    try Task.checkCancellation()
+                    let id: String
+                    if let cached = uploadedFileIDs[file.id] { id = cached }
+                    else { id = try await service.upload(file: file) }
+                    try Task.checkCancellation()
+                    guard generation == sessionGeneration else { return }
+                    uploadedFileIDs[file.id] = id
+                    fileIDs.append(id)
+                }
+                try Task.checkCancellation()
+                isUploadingFiles = false
+                isThinking = true
+                replyStarted = true
+                let stream = try await service.reply(conversationID: conversationID, parentID: parentID, text: text, modeID: mode, temporary: temporary, fileIDs: fileIDs)
+                for try await event in stream {
+                    try Task.checkCancellation()
+                    guard generation == sessionGeneration else { return }
+                    if !event.conversationID.isEmpty, selectedConversationID == nil {
+                        selectedConversationID = event.conversationID
+                        if temporary {
+                            temporaryConversationIDs.insert(event.conversationID)
+                            conversations.removeAll { $0.id == event.conversationID }
+                        } else {
+                            selectedTitle = String((text.isEmpty ? files.first?.name ?? L10n.text("New chat") : text).prefix(70))
+                            conversations.insert(ChatSummary(id: event.conversationID, title: selectedTitle, modifiedAt: Date()), at: 0)
+                            conversations = Self.ordered(conversations)
+                        }
+                    }
+                    if !event.responseID.isEmpty { serverResponseID = event.responseID }
+                    isThinking = event.isThinking
+                    if let index = messages.firstIndex(where: { $0.id == assistantID }) {
+                        if event.isFinal { messages[index].text = event.text }
+                        else if !event.isThinking { messages[index].text += event.text }
+                        if let reasoning = event.reasoning { messages[index].reasoning = reasoning }
+                        else if event.isThinking { messages[index].reasoning = (messages[index].reasoning ?? "") + event.text }
+                        if let duration = event.reasoningDuration { messages[index].reasoningDuration = duration }
+                    }
+                    if event.isFinal { finalReceived = true; finalEvent = event; break }
+                }
+                guard finalReceived, let completedConversationID = selectedConversationID, !serverResponseID.isEmpty else { throw ClientFailure.interruptedReply }
+                guard messages.last?.text.isEmpty == false || finalEvent?.attachments.isEmpty == false else { throw ClientFailure.emptyReply }
+                selectedLeafID = serverResponseID
+                isThinking = false
+                if let finalEvent, finalEvent.failure == nil {
+                    onReplyCompleted?(ReplyCompletion(requestID: userID, conversationID: completedConversationID,
+                                                     responseID: serverResponseID, isTemporary: temporary, text: finalEvent.text))
+                }
+                guard !Task.isCancelled, generation == sessionGeneration else { return }
+                if temporary, let finalEvent, let index = messages.firstIndex(where: { $0.id == assistantID }) {
+                    // Temporary chats have no reloadable history. The final event
+                    // acknowledges the response ID used as the next turn's parent.
+                    messages[index] = ChatMessage(id: serverResponseID, parentID: userID, role: .assistant, text: finalEvent.text,
+                        createdAt: Date(), sources: finalEvent.sources, attachments: finalEvent.attachments,
+                        reasoning: finalEvent.reasoning ?? messages[index].reasoning, reasoningDuration: finalEvent.reasoningDuration ?? messages[index].reasoningDuration, failure: finalEvent.failure)
+                    needsReload = false
+                } else {
+                    // Reconcile server IDs and topology before allowing another turn.
+                    needsReload = true
+                    await loadSelectedConversation(allowDuringSend: true)
+                    await refreshHistory()
+                }
+            } catch {
+                guard generation == sessionGeneration else { return }
+                if !replyStarted {
+                    messages.removeAll { $0.id == userID || $0.id == assistantID }
+                    draft = text
+                    draftFiles = files
+                    if !Task.isCancelled { presentError(error) }
+                    return
+                }
+                needsReload = true
+                recoveryText = text
+                if temporary && !DisplayError(error).needsLogin { presentError(ClientFailure.temporaryReplyInterrupted) }
+                else { presentError(Task.isCancelled ? ClientFailure.interruptedReply : error) }
+            }
+        }
+    }
+
+    public func stopSending() { sendTask?.cancel() }
+
+    private func presentError(_ underlying: Error) {
+        let display = DisplayError(underlying)
+        requiresLogin = requiresLogin || display.needsLogin
+        error = display
+    }
+
+    /// Call on logout/replacement so in-flight callbacks cannot update a later session.
+    public func shutdown() {
+        sessionGeneration = UUID()
+        sendTask?.cancel()
+        loadGeneration = UUID()
+        historyGeneration = UUID()
+        draftFiles = []
+        fileDrafts = [:]
+        uploadedFileIDs = [:]
+        if isTemporary {
+            selectedConversationID = nil
+            draft = ""
+            clearThread()
+        }
+    }
+
+    public func waitForSend() async { await sendTask?.value }
+}
