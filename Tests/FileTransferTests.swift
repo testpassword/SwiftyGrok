@@ -3,6 +3,36 @@ import XCTest
 @testable import GrokCore
 
 final class FileTransferTests: XCTestCase {
+    func testFinderHandoffPreservesFileNamesAndKeepsPathsOutOfTheRequestURL() throws {
+        let files = [URL(fileURLWithPath: "/fixture/Отчёт #1 & 50% +.md"), URL(fileURLWithPath: "/fixture/image.png")]
+        XCTAssertEqual(try FinderAttachmentHandoff.decode(FinderAttachmentHandoff.encode(files)), files)
+        let id = UUID()
+        let request = FinderAttachmentHandoff.requestURL(id)
+        XCTAssertEqual(FinderAttachmentHandoff.requestID(request), id)
+        XCTAssertFalse(request.absoluteString.contains("fixture"))
+    }
+
+    func testFinderHandoffRejectsMalformedRequestsAndNonLocalFiles() throws {
+        let id = UUID().uuidString
+        for value in [
+            "https://finder/attach?request=\(id)", "swiftygrok://other/attach?request=\(id)",
+            "swiftygrok://finder/other?request=\(id)", "swiftygrok://finder/attach?request=invalid",
+            "swiftygrok://finder/attach?request=\(id)&request=\(id)",
+            "swiftygrok://user@finder/attach?request=\(id)",
+            "swiftygrok://finder:123/attach?request=\(id)", "swiftygrok://finder/attach?request=\(id)#fragment"
+        ] {
+            XCTAssertNil(FinderAttachmentHandoff.requestID(URL(string: value)!), value)
+        }
+        for files in [[], [URL(string: "https://example.com/file.txt")!],
+                      [URL(string: "file://remote/fixture/file.txt")!], [URL(string: "relative.txt")!]] as [[URL]] {
+            XCTAssertThrowsError(try FinderAttachmentHandoff.encode(files))
+            let data = try JSONEncoder().encode(files)
+            XCTAssertThrowsError(try FinderAttachmentHandoff.decode(data))
+        }
+        XCTAssertThrowsError(try FinderAttachmentHandoff.decode(Data("not JSON".utf8)))
+        XCTAssertThrowsError(try FinderAttachmentHandoff.decode(Data(repeating: 0, count: 1_048_577)))
+    }
+
     func testFileReaderChecksTheWholeBatchAndSkipsDirectoriesAndDuplicates() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -21,6 +51,14 @@ final class FileTransferTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testFinderHandoffCanOnlyBeConsumedOnce() throws {
+        let files = [URL(fileURLWithPath: "/fixture/selected.md")]
+        let request = try FinderAttachmentHandoff.prepare(files)
+        defer { FinderAttachmentHandoff.discard(request) }
+        XCTAssertEqual(FinderAttachmentHandoff.takeFiles(from: request), files)
+        XCTAssertTrue(FinderAttachmentHandoff.takeFiles(from: request).isEmpty)
+    }
+
     func testImageExportPreservesOriginalBytesAndNeverOverwrites() throws {
         let data = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=")!
         let file = try ImageFileExport(data: data, name: "../../photo:original.jpg")

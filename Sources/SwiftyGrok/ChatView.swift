@@ -439,7 +439,9 @@ import UniformTypeIdentifiers
 
     private var projectsHeader: some View {
         HStack(spacing: 8) {
-            Text(L10n.text("Projects")).font(.system(size: 13, weight: .semibold))
+            Label(L10n.text("Projects"), systemImage: "folder")
+                .labelStyle(.titleAndIcon)
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
             Button { showCreateProject = true } label: {
                 Image(systemName: "plus").font(.system(size: 12, weight: .medium)).frame(width: 22, height: 22)
             }

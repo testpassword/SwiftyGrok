@@ -21,6 +21,7 @@ public final class ChatStore {
     public private(set) var requiresLogin = false
     public private(set) var hasMoreHistory = false
     public private(set) var modes = ChatMode.fallback
+    public private(set) var isLoadingModes = false
     public private(set) var accountName: String?
     public private(set) var accountImageURL: URL?
     public private(set) var updatingConversations = Set<String>()
@@ -78,7 +79,8 @@ public final class ChatStore {
         }
     }
     public var canSend: Bool {
-        !isSending && !isReadingFiles && updatingConversations.isEmpty && !isLoadingMessages && !needsReload && !requiresLogin && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftFiles.isEmpty)
+        !isSending && !isReadingFiles && updatingConversations.isEmpty && !isLoadingMessages && !needsReload && !requiresLogin &&
+        modes.contains(where: { $0.id == modeID && $0.isAvailable }) && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftFiles.isEmpty)
     }
     public var canAttachFiles: Bool { !isSending && !isReadingFiles }
 
@@ -186,10 +188,21 @@ public final class ChatStore {
     }
 
     public func loadModes() async {
-        if let result = try? await service.modes(), !result.isEmpty {
+        guard !isLoadingModes else { return }
+        let generation = sessionGeneration
+        isLoadingModes = true
+        defer { isLoadingModes = false }
+        if let result = try? await service.modes(), generation == sessionGeneration, !Task.isCancelled {
             modes = result
-            if !result.contains(where: { $0.id == modeID }) { modeID = result[0].id }
+            if !result.contains(where: { $0.id == modeID && $0.isAvailable }), let available = result.first(where: \.isAvailable) {
+                modeID = available.id
+            }
         }
+    }
+
+    public func selectMode(_ id: String) {
+        guard !isSending, modes.contains(where: { $0.id == id && $0.isAvailable }) else { return }
+        modeID = id
     }
 
     public func loadProfile() async {

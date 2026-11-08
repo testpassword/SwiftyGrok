@@ -22,6 +22,7 @@ Local modifications:
 10. `Endpoints/GrokClient+Conversations.swift`: optional `workspaceId` filter for paginated project chat lists, matching the public Grok frontend request schema.
 11. `Endpoints/GrokClient+Workspaces.swift`: remove a conversation's project membership with DELETE `/workspaces/{workspaceId}/conversations/{conversationId}`. New project conversations use the library's existing `workspaceIds` message option.
 12. `Endpoints/GrokClient+Conversations.swift`: optional `excludeProjects` query flag; general history uses it to exclude project conversations, while workspace-filtered lists keep them visible.
+13. Mode discovery retains `iconHint` and `badgeText`, recognizes `availability.comingSoon`, and accepts an optional locale in `/rest/modes` requests. The native client preserves disabled modes and renders their metadata in a SwiftUI popover with SF Symbols.
 
 The native app and its core adapter use the library's request builder, endpoint models, HTTP error validation, NDJSON/SSE parser, and cancellable streaming transport. The vendored library retains upstream's Swift 5 language mode; it is compiled by a Swift 6 toolchain.
 

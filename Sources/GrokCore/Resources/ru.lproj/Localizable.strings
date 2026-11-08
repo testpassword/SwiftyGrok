@@ -80,7 +80,6 @@
 "Private conversation" = "Приватный разговор";
 "Profile" = "Профиль";
 "Quick Look" = "Быстрый просмотр";
-"Quick input…" = "Быстрый ввод…";
 "Refresh chat" = "Обновить чат";
 "Refresh history" = "Обновить историю";
 "Refresh session" = "Обновить сессию";
@@ -128,7 +127,7 @@
 "Your conversations will appear here" = "Ваши диалоги появятся здесь";
 "Your session is stored in macOS Keychain." = "Сессия хранится в macOS Keychain.";
 "“%@” will be deleted from your Grok history." = "«%@» будет удалён из истории Grok.";
-"⌥Space is unavailable (%@). Open quick input from the File menu." = "⌥Space недоступно (%@). Быстрый ввод можно открыть через меню «Файл».";
+"⌥Space is unavailable (%@)." = "⌥Space недоступно (%@).";
 "Settings" = "Настройки";
 "Settings…" = "Настройки…";
 "Appearance" = "Оформление";
@@ -142,7 +141,7 @@
 "⌘Enter sends; Enter inserts a new line." = "⌘Enter — отправить, Enter — новая строка.";
 "Enter sends; ⌘Enter inserts a new line." = "Enter — отправить, ⌘Enter — новая строка.";
 "Enable quick input" = "Плавающая панель";
-"Open quick input with ⌥Space or from the File menu." = "Вызов по ⌥Space или через меню «Файл».";
+"Open quick input with ⌥Space." = "Вызов по ⌥Space.";
 "Send · ↩" = "Отправить · ↩";
 "Floating input" = "Плавающая панель";
 "Follow system transparency" = "Следовать прозрачности системы";
@@ -199,3 +198,11 @@
 "Remove from project" = "Убрать из проекта";
 "Start a conversation in this project" = "Начните беседу в этом проекте";
 "Use this project to keep conversations and files in one place" = "Используйте этот проект, чтобы хранить беседы и файлы в одном месте";
+"Requires %@" = "Требуется %@";
+"Unavailable for this account" = "Недоступен для этого аккаунта";
+"Requires a subscription" = "Требуется подписка";
+"Coming soon" = "Скоро появится";
+"No modes available" = "Нет доступных режимов";
+"Fast" = "Быстрый";
+"Quick responses" = "Быстрые ответы";
+"Chooses Fast or Expert" = "Выбирает между Быстрым и Экспертным режимами";

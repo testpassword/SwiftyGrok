@@ -107,7 +107,7 @@ import GrokUsage
                 Toggle(L10n.text("Enable quick input"), isOn: Binding(
                     get: { behavior.quickInputEnabled }, set: { behavior.setQuickInputEnabled($0) }
                 ))
-                Text(L10n.text("Open quick input with ⌥Space or from the File menu."))
+                Text(L10n.text("Open quick input with ⌥Space."))
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section {

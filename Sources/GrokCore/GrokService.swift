@@ -57,7 +57,10 @@ public final class GrokService: GrokServing, ProjectServing {
     }
 
     public func modes() async throws -> [ChatMode] {
-        try await client.listModes().filter(\.isAvailable).map { ChatMode(id: $0.id, name: $0.displayName) }
+        try await client.listModes(locale: L10n.languageCode).map {
+            ChatMode(id: $0.id, name: $0.displayName, summary: $0.summary, iconHint: $0.iconHint, badgeText: $0.badgeText,
+                     isAvailable: $0.isAvailable, unavailableReason: $0.unavailableReason, minimumSubscriptionTier: $0.minimumSubscriptionTier)
+        }
     }
 
     public func projects() async throws -> [GrokProject] {

@@ -7,7 +7,6 @@ import GrokCore
 struct SwiftyGrokApp: App {
     @NSApplicationDelegateAdaptor(GrokAppDelegate.self) private var delegate
     @State private var app = AppModel()
-    @State private var behavior = BehaviorSettings.shared
     @FocusedValue(\.chatSearch) private var searchChats
     var body: some Scene {
         Window("SwiftyGrok", id: "main") {
@@ -40,8 +39,6 @@ struct SwiftyGrokApp: App {
                     .disabled(searchChats == nil || app.showLogin)
             }
             CommandGroup(after: .newItem) {
-                Button(L10n.text("Quick input…")) { app.quickInput.show() }
-                    .disabled(!behavior.quickInputEnabled)
                 if let error = app.quickInput.shortcutError { Text(error) }
                 Button(L10n.text("Refresh chat")) { Task { await app.store?.loadSelectedConversation() } }
                     .keyboardShortcut("r", modifiers: .command)
@@ -77,7 +74,7 @@ struct SwiftyGrokApp: App {
         if urls.contains(where: { $0.scheme == "swiftygrok" && $0.host == "widgets" && $0.path == "/refresh" }) {
             if let app { app.openWidgetSettings() } else { pendingWidgetRefresh = true }
         }
-        let files = urls.filter(\.isFileURL)
+        let files = urls.flatMap { $0.isFileURL ? [$0] : FinderAttachmentHandoff.takeFiles(from: $0) }
         guard !files.isEmpty else { return }
         if let app { app.receiveFinderFiles(files) }
         else { pendingFileURLs.append(contentsOf: files) }

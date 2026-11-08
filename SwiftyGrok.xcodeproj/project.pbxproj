@@ -48,6 +48,8 @@
 		903B1F86C4F2A2AFA511F556 = { isa = PBXFileReference; lastKnownFileType = image.icns; path = "Sources/SwiftyGrok/Resources/AppIconLight.icns"; sourceTree = SOURCE_ROOT; };
 		C05ECFDAE575C8ADDE924455 = { isa = PBXBuildFile; fileRef = 903B1F86C4F2A2AFA511F556; };
 		F4B27022420AC898D5AD68BA = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Sources/SwiftyGrokFinder/FinderSync.swift"; sourceTree = SOURCE_ROOT; };
+		B26380B7ED1E4C68ABAA97D4 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Sources/GrokCore/FinderAttachmentHandoff.swift"; sourceTree = SOURCE_ROOT; };
+		D04EDBDF87514AF2AFB086AE = { isa = PBXBuildFile; fileRef = B26380B7ED1E4C68ABAA97D4; };
 		5E79E88C5275801E3CB31C29 = { isa = PBXBuildFile; fileRef = F4B27022420AC898D5AD68BA; };
 		14B06AD4C7E7976ED924913B = { isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Configuration/FinderExtension-Info.plist"; sourceTree = SOURCE_ROOT; };
 		0FA93C959E3DB8DCE48302A5 = { isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "Configuration/FinderExtension.entitlements"; sourceTree = SOURCE_ROOT; };
@@ -58,8 +60,8 @@
 		0FC2499B1B46F4157F6ECC48 = { isa = PBXFileReference; lastKnownFileType = image.png; path = "Configuration/Assets.xcassets/AppIcon.appiconset/icon_32x32@2x.png"; sourceTree = SOURCE_ROOT; };
 		58494774E1935EA00D3E53E5 = { isa = PBXBuildFile; fileRef = 0FC2499B1B46F4157F6ECC48; };
 		1791563F175353F2C0479487 = { isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SwiftyGrokFinder.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		9472BA1EC9AC8E2C3254E595 = { isa = PBXGroup; children = (F4B27022420AC898D5AD68BA, 2A4FEEE0A624F1E6153B9F00, 0FC2499B1B46F4157F6ECC48,); name = SwiftyGrokFinder; sourceTree = "<group>"; };
-		C7F2F0DE0189923790327E0A = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (5E79E88C5275801E3CB31C29,); runOnlyForDeploymentPostprocessing = 0; };
+		9472BA1EC9AC8E2C3254E595 = { isa = PBXGroup; children = (F4B27022420AC898D5AD68BA, B26380B7ED1E4C68ABAA97D4, 2A4FEEE0A624F1E6153B9F00, 0FC2499B1B46F4157F6ECC48,); name = SwiftyGrokFinder; sourceTree = "<group>"; };
+		C7F2F0DE0189923790327E0A = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (5E79E88C5275801E3CB31C29, D04EDBDF87514AF2AFB086AE,); runOnlyForDeploymentPostprocessing = 0; };
 		D6E35AE65075CDA75E725689 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (71ACC90F96FF9A94FEBB8B88, 58494774E1935EA00D3E53E5,); runOnlyForDeploymentPostprocessing = 0; };
 		24197C0A130A907ECCF769DE = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		5C681091F5CDC1E65068004D = { isa = XCBuildConfiguration; buildSettings = { CODE_SIGN_STYLE = "Manual"; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_ENTITLEMENTS = "Configuration/FinderExtension.entitlements"; ENABLE_HARDENED_RUNTIME = "YES"; ENABLE_APP_SANDBOX = "YES"; APPLICATION_EXTENSION_API_ONLY = "YES"; GENERATE_INFOPLIST_FILE = "NO"; INFOPLIST_FILE = "Configuration/FinderExtension-Info.plist"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"; PRODUCT_BUNDLE_IDENTIFIER = "app.swiftygrok.native.finder"; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "macosx"; SWIFT_EMIT_LOC_STRINGS = "YES"; SKIP_INSTALL = "YES"; }; name = Debug; };

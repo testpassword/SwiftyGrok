@@ -82,7 +82,9 @@ internal enum GrokModeParser {
             summary: lookup.string(summaryKeys) ?? "",
             isAvailable: availability.isAvailable,
             unavailableReason: availability.reason,
-            minimumSubscriptionTier: availability.minimumSubscriptionTier
+            minimumSubscriptionTier: availability.minimumSubscriptionTier,
+            iconHint: lookup.string("iconHint", "icon_hint"),
+            badgeText: lookup.string("badgeText", "badge_text")
         )
     }
 
@@ -106,6 +108,9 @@ internal enum GrokModeParser {
 
         if let availability = dictionaryValue(dictionary["availability"]?.value) {
             let availabilityLookup = JSONLookup(availability)
+            if let comingSoon = dictionaryValue(availability["comingSoon"]?.value) ?? dictionaryValue(availability["coming_soon"]?.value) {
+                return ParsedModeAvailability(isAvailable: false, reason: JSONLookup(comingSoon).string(reasonKeys) ?? "Coming soon", minimumSubscriptionTier: nil)
+            }
             if let availableValue = availability["available"]?.value {
                 if let available = availableValue as? Bool {
                     return ParsedModeAvailability(

@@ -55,7 +55,7 @@ import GrokCore
         let registration = RegisterEventHotKey(UInt32(kVK_Space), UInt32(optionKey), EventHotKeyID(signature: 0x47724B4D, id: 1),
                                                GetApplicationEventTarget(), 0, &hotKey)
         shortcutError = registration == noErr ? nil
-            : L10n.format("⌥Space is unavailable (%@). Open quick input from the File menu.", String(registration))
+            : L10n.format("⌥Space is unavailable (%@).", String(registration))
     }
 
     private func handleShortcut() {

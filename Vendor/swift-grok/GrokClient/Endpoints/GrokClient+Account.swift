@@ -133,12 +133,13 @@ extension GrokClient {
         try await rateLimits(modelName: mode.id)
     }
 
-    public func listModesResponse() async throws -> GrokModesResponse {
-        let json = try await sendJSON(path: "/modes", payload: [:], namespace: .root)
+    public func listModesResponse(locale: String? = nil) async throws -> GrokModesResponse {
+        let payload: [String: Any] = locale.map { ["locale": $0] } ?? [:]
+        let json = try await sendJSON(path: "/modes", payload: payload, namespace: .root)
         return GrokModesResponse(modes: GrokModeParser.modes(from: json), rawJSON: AnyCodable(json))
     }
 
-    public func listModes() async throws -> [GrokMode] {
-        try await listModesResponse().modes
+    public func listModes(locale: String? = nil) async throws -> [GrokMode] {
+        try await listModesResponse(locale: locale).modes
     }
 }

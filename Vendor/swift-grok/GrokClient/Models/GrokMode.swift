@@ -7,6 +7,8 @@ public struct GrokMode: Hashable, Sendable {
     public let isAvailable: Bool
     public let unavailableReason: String?
     public let minimumSubscriptionTier: String?
+    public let iconHint: String?
+    public let badgeText: String?
 
     public init(
         id: String,
@@ -14,7 +16,9 @@ public struct GrokMode: Hashable, Sendable {
         summary: String = "",
         isAvailable: Bool = true,
         unavailableReason: String? = nil,
-        minimumSubscriptionTier: String? = nil
+        minimumSubscriptionTier: String? = nil,
+        iconHint: String? = nil,
+        badgeText: String? = nil
     ) {
         self.id = id
         self.displayName = displayName ?? id
@@ -22,6 +26,8 @@ public struct GrokMode: Hashable, Sendable {
         self.isAvailable = isAvailable
         self.unavailableReason = unavailableReason
         self.minimumSubscriptionTier = minimumSubscriptionTier
+        self.iconHint = iconHint
+        self.badgeText = badgeText
     }
 
     public var unavailableDescription: String? {

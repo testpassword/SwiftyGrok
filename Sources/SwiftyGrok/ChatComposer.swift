@@ -100,24 +100,7 @@ import GrokCore
                 .buttonStyle(.plain).contentShape(Circle())
                 .help(L10n.text("Attach files")).accessibilityLabel(L10n.text("Attach files"))
                 .disabled(store.isSending || store.isReadingFiles)
-                Menu {
-                    Picker(L10n.text("Mode"), selection: $store.modeID) {
-                        ForEach(store.modes) { mode in Text(mode.name).tag(mode.id) }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bolt")
-                        if !compact {
-                            Text(store.modes.first { $0.id == store.modeID }?.name ?? store.modeID)
-                            Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
-                        }
-                    }
-                    .font(.system(size: 13, weight: .medium))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(.primary.opacity(0.06), in: Capsule())
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                .disabled(store.isSending).accessibilityLabel(L10n.text("Response mode"))
+                ModePickerButton(store: store, compact: compact)
                 if store.selectedProjectID == nil && (store.selectedConversationID == nil || store.isTemporary) {
                     Toggle(isOn: Binding(get: { store.isTemporary }, set: { store.setTemporary($0) })) {
                         if compact { Image(systemName: "eye.slash").accessibilityHidden(true) }
@@ -166,5 +149,155 @@ import GrokCore
     private func importFiles(_ result: Result<[URL], Error>) {
         guard case let .success(urls) = result, !urls.isEmpty else { return }
         Task { await store.importFiles(urls) }
+    }
+}
+
+private extension ChatMode {
+    var symbolName: String {
+        switch iconHint {
+        case "lightning": return "bolt"
+        case "lightbulb": return "lightbulb"
+        case "rocket": return "paperplane"
+        case "connected_apps": return "square.grid.2x2"
+        case "moon": return "moon"
+        case "cube": return "cube"
+        case "blackhole": return "circle.dotted"
+        case "hammer": return "hammer"
+        case "circuit_board": return "cpu"
+        case "imagine": return "photo"
+        default:
+            switch id {
+            case "fast": return "bolt"
+            case "expert": return "lightbulb"
+            case "heavy": return "square.grid.2x2"
+            case "auto": return "paperplane"
+            default: return "slider.horizontal.3"
+            }
+        }
+    }
+}
+
+@MainActor private struct ModePickerButton: View {
+    let store: ChatStore
+    let compact: Bool
+    @State private var presented = false
+    private var selected: ChatMode? { store.modes.first { $0.id == store.modeID } }
+
+    var body: some View {
+        Button { presented.toggle() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: selected?.symbolName ?? "slider.horizontal.3")
+                if !compact {
+                    Text(selected?.name ?? L10n.text("Mode"))
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                }
+            }
+            .font(.system(size: 13, weight: .medium))
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(.primary.opacity(0.06), in: Capsule())
+        }
+        .buttonStyle(.plain).fixedSize().disabled(store.isSending)
+        .accessibilityLabel(L10n.text("Response mode"))
+        .accessibilityValue(selected?.name ?? L10n.text("Mode"))
+        .help(L10n.text("Response mode"))
+        .popover(isPresented: $presented, arrowEdge: .bottom) {
+            ModePickerPopover(store: store) { presented = false }
+        }
+        .onChange(of: store.isSending) { _, sending in if sending { presented = false } }
+    }
+}
+
+@MainActor private struct ModePickerPopover: View {
+    let store: ChatStore
+    let close: () -> Void
+    @State private var hovered: String?
+    @FocusState private var focused: String?
+
+    private func rowHeight(_ mode: ChatMode) -> CGFloat {
+        guard !mode.summary.isEmpty else { return 36 }
+        // Text width after the popover padding, row insets, icons and spacing.
+        let bounds = (mode.summary as NSString).boundingRect(
+            with: NSSize(width: 252, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 12)]
+        )
+        return 36 + min(30, ceil(bounds.height))
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(store.modes) { mode in row(mode).id(mode.id) }
+                    if store.modes.isEmpty {
+                        Text(L10n.text("No modes available")).font(.callout).foregroundStyle(.secondary).padding()
+                    }
+                }.padding(8)
+            }
+            .frame(width: 360, height: min(420, max(64, store.modes.reduce(CGFloat(16)) { $0 + rowHeight($1) + 2 })))
+            .onAppear { restoreFocus() }
+            .onChange(of: store.modes) { _, _ in restoreFocus() }
+            .onChange(of: focused) { _, id in if let id { proxy.scrollTo(id) } }
+            .onMoveCommand { direction in
+                let available = store.modes.filter(\.isAvailable)
+                guard !available.isEmpty, direction == .up || direction == .down else { return }
+                let index = available.firstIndex { $0.id == focused } ?? 0
+                focused = available[min(max(index + (direction == .up ? -1 : 1), 0), available.count - 1)].id
+            }
+            .onKeyPress(.return) {
+                guard let id = focused, store.modes.contains(where: { $0.id == id && $0.isAvailable }) else { return .ignored }
+                select(id)
+                return .handled
+            }
+            .onExitCommand(perform: close)
+        }
+        .task { await store.loadModes() }
+    }
+
+    private func row(_ mode: ChatMode) -> some View {
+        Button { select(mode.id) } label: {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: mode.symbolName).font(.system(size: 20)).frame(width: 26)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(mode.name).font(.system(size: 14, weight: .medium)).lineLimit(1)
+                        if let badge = mode.badgeText, !badge.isEmpty {
+                            Text(badge).font(.system(size: 9, weight: .semibold)).lineLimit(1)
+                                .padding(.horizontal, 6).padding(.vertical, 3)
+                                .background(.quaternary, in: Capsule())
+                        }
+                    }
+                    if !mode.summary.isEmpty {
+                        Text(mode.summary).font(.system(size: 12)).foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "checkmark").font(.system(size: 14, weight: .semibold))
+                    .opacity(store.modeID == mode.id ? 1 : 0).frame(width: 18)
+            }
+            .padding(.horizontal, 12).frame(height: rowHeight(mode))
+            .foregroundStyle(mode.isAvailable ? Color.primary : Color.secondary)
+            .background(hovered == mode.id || focused == mode.id ? Color.primary.opacity(0.06) : .clear,
+                        in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).disabled(!mode.isAvailable || store.isSending)
+        .focused($focused, equals: mode.id)
+        .onHover { hovered = $0 ? mode.id : nil }
+        .help(mode.availabilityExplanation ?? mode.summary)
+        .accessibilityHint(mode.availabilityExplanation ?? "")
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(store.modeID == mode.id ? .isSelected : [])
+    }
+
+    private func restoreFocus() {
+        if store.modes.contains(where: { $0.id == focused && $0.isAvailable }) { return }
+        focused = store.modes.first { $0.id == store.modeID && $0.isAvailable }?.id ?? store.modes.first { $0.isAvailable }?.id
+    }
+
+    private func select(_ id: String) {
+        guard !store.isSending, store.modes.contains(where: { $0.id == id && $0.isAvailable }) else { return }
+        store.selectMode(id)
+        close()
     }
 }

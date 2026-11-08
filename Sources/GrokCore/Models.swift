@@ -155,8 +155,33 @@ public struct ReplyEvent: Sendable {
 public struct ChatMode: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
-    public init(id: String, name: String) { self.id = id; self.name = name }
-    public static let fallback = [ChatMode(id: "fast", name: "Fast"), ChatMode(id: "auto", name: "Auto")]
+    public let summary: String
+    public let iconHint: String?
+    public let badgeText: String?
+    public let isAvailable: Bool
+    public let unavailableReason: String?
+    public let minimumSubscriptionTier: String?
+    public init(id: String, name: String, summary: String = "", iconHint: String? = nil, badgeText: String? = nil,
+                isAvailable: Bool = true, unavailableReason: String? = nil, minimumSubscriptionTier: String? = nil) {
+        self.id = id; self.name = name; self.summary = summary; self.iconHint = iconHint
+        let badge = badgeText?.trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters))
+        self.badgeText = badge?.isEmpty == false ? badge : nil
+        self.isAvailable = isAvailable; self.unavailableReason = unavailableReason; self.minimumSubscriptionTier = minimumSubscriptionTier
+    }
+    public var availabilityExplanation: String? {
+        guard !isAvailable else { return nil }
+        if let reason = unavailableReason, !reason.isEmpty { return L10n.text(reason) }
+        if let tier = minimumSubscriptionTier, !tier.isEmpty {
+            let names = ["TIER_SUPERGROK": "SuperGrok", "TIER_SUPERGROK_HEAVY": "SuperGrok Heavy", "TIER_SUPERGROK_LITE": "SuperGrok Lite"]
+            if let name = names[tier] { return L10n.format("Requires %@", name) }
+            return tier.hasPrefix("TIER_") ? L10n.text("Requires a subscription") : L10n.format("Requires %@", tier)
+        }
+        return L10n.text("Unavailable for this account")
+    }
+    public static let fallback = [
+        ChatMode(id: "fast", name: L10n.text("Fast"), summary: L10n.text("Quick responses"), iconHint: "lightning"),
+        ChatMode(id: "auto", name: L10n.text("Auto"), summary: L10n.text("Chooses Fast or Expert"), iconHint: "rocket")
+    ]
 }
 
 public enum ClientFailure: Error, LocalizedError {

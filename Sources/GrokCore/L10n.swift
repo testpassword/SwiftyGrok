@@ -3,6 +3,7 @@ import Foundation
 /// Shared by SwiftUI, AppKit and core errors. Bundle selects the system's
 /// preferred supported language; the package development language is English.
 public enum L10n {
+    public static var languageCode: String { Bundle.module.preferredLocalizations.first ?? "en" }
     public static func text(_ key: String) -> String {
         NSLocalizedString(key, bundle: .module, comment: "")
     }

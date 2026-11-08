@@ -23,6 +23,8 @@ private final class FakeService: GrokServing {
     var mutationError: Error?
     var mutations: [String] = []
     var mutationHook: (() async -> Void)?
+    var modeCatalog = ChatMode.fallback
+    var modeHook: (() async -> Void)?
     func shareConversation(id: String, responseID: String) async throws -> URL {
         if let mutationError { throw mutationError }
         await mutationHook?()
@@ -56,7 +58,7 @@ private final class FakeService: GrokServing {
         if let loadHook { return try await loadHook(id) }
         return loaded
     }
-    func modes() async throws -> [ChatMode] { ChatMode.fallback }
+    func modes() async throws -> [ChatMode] { await modeHook?(); return modeCatalog }
     func upload(file: DraftFile) async throws -> String {
         await uploadHook?()
         if let uploadError { throw uploadError }
@@ -77,6 +79,51 @@ private final class FakeService: GrokServing {
 }
 
 final class ChatStoreTests: XCTestCase {
+    @MainActor func testUnavailableModeCannotBeSelectedOrSentAndCatalogFallsBackToAvailableMode() async {
+        let service = FakeService()
+        service.modeCatalog = [ChatMode(id: "fast", name: "Fast", isAvailable: false), ChatMode(id: "expert", name: "Expert")]
+        let store = ChatStore(service: service)
+        await store.loadModes()
+        XCTAssertEqual(store.modes.count, 2)
+        XCTAssertEqual(store.modeID, "expert")
+        store.selectMode("fast")
+        XCTAssertEqual(store.modeID, "expert")
+        store.draft = "Question"
+        store.modeID = "fast"
+        XCTAssertFalse(store.canSend)
+        store.send()
+        XCTAssertTrue(service.calls.isEmpty)
+        store.selectMode("expert")
+        XCTAssertTrue(store.canSend)
+    }
+
+    @MainActor func testModeCatalogWithNoAvailableModesDisablesSending() async {
+        let service = FakeService()
+        service.modeCatalog = [ChatMode(id: "heavy", name: "Heavy", isAvailable: false)]
+        let store = ChatStore(service: service)
+        await store.loadModes()
+        store.draft = "Question"
+        XCTAssertFalse(store.canSend)
+        store.selectMode("heavy")
+        XCTAssertEqual(store.modeID, "fast")
+        XCTAssertEqual(store.modes.count, 1)
+    }
+
+    @MainActor func testLateModeCatalogDoesNotUpdateRetiredSession() async {
+        let service = FakeService()
+        service.modeCatalog = [ChatMode(id: "other", name: "Other")]
+        var release: CheckedContinuation<Void, Never>?
+        service.modeHook = { await withCheckedContinuation { release = $0 } }
+        let store = ChatStore(service: service)
+        let load = Task { await store.loadModes() }
+        while release == nil { await Task.yield() }
+        store.shutdown()
+        release?.resume()
+        await load.value
+        XCTAssertEqual(store.modes, ChatMode.fallback)
+        XCTAssertEqual(store.modeID, "fast")
+    }
+
     @MainActor func testProjectDraftsAndFilesAreSeparateFromOrdinaryAndQuickInputDrafts() {
         let store = ChatStore(service: FakeService())
         store.draft = "Ordinary"

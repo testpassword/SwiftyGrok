@@ -80,7 +80,6 @@
 "Private conversation" = "Private conversation";
 "Profile" = "Profile";
 "Quick Look" = "Quick Look";
-"Quick input…" = "Quick input…";
 "Refresh chat" = "Refresh chat";
 "Refresh history" = "Refresh history";
 "Refresh session" = "Refresh session";
@@ -128,7 +127,7 @@
 "Your conversations will appear here" = "Your conversations will appear here";
 "Your session is stored in macOS Keychain." = "Your session is stored in macOS Keychain.";
 "“%@” will be deleted from your Grok history." = "“%@” will be deleted from your Grok history.";
-"⌥Space is unavailable (%@). Open quick input from the File menu." = "⌥Space is unavailable (%@). Open quick input from the File menu.";
+"⌥Space is unavailable (%@)." = "⌥Space is unavailable (%@).";
 "Settings" = "Settings";
 "Settings…" = "Settings…";
 "Appearance" = "Appearance";
@@ -142,7 +141,7 @@
 "⌘Enter sends; Enter inserts a new line." = "⌘Enter sends; Enter inserts a new line.";
 "Enter sends; ⌘Enter inserts a new line." = "Enter sends; ⌘Enter inserts a new line.";
 "Enable quick input" = "Enable quick input";
-"Open quick input with ⌥Space or from the File menu." = "Open quick input with ⌥Space or from the File menu.";
+"Open quick input with ⌥Space." = "Open quick input with ⌥Space.";
 "Send · ↩" = "Send · ↩";
 "Floating input" = "Floating input";
 "Follow system transparency" = "Follow system transparency";
@@ -199,3 +198,11 @@
 "Remove from project" = "Remove from project";
 "Start a conversation in this project" = "Start a conversation in this project";
 "Use this project to keep conversations and files in one place" = "Use this project to keep conversations and files in one place";
+"Requires %@" = "Requires %@";
+"Unavailable for this account" = "Unavailable for this account";
+"Requires a subscription" = "Requires a subscription";
+"Coming soon" = "Coming soon";
+"No modes available" = "No modes available";
+"Fast" = "Fast";
+"Quick responses" = "Quick responses";
+"Chooses Fast or Expert" = "Chooses Fast or Expert";

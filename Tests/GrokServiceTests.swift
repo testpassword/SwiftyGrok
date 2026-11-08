@@ -37,6 +37,28 @@ private final class FixtureProtocol: URLProtocol {
 }
 
 final class GrokServiceTests: XCTestCase {
+    @MainActor func testModeCatalogKeepsDescriptionsIconsBadgesAndUnavailableModes() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/rest/modes")
+            XCTAssertEqual(request.httpMethod, "POST")
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            XCTAssertTrue(["en", "ru"].contains(body["locale"] ?? ""))
+            return (200, Data(#"{"modes":[{"id":"fast","title":"Fast","description":"Quick responses","iconHint":"lightning","availability":{"available":{}}},{"id":"build","title":"Build","description":"Build apps","iconHint":"hammer","badgeText":"BETA","availability":{"requiresUpgrade":{"message":"Upgrade required","minimumSubscriptionTier":"TIER_SUPERGROK"}}},{"id":"future","title":"Future","availability":{"comingSoon":{}}}]}"#.utf8))
+        }
+        let modes = try await service().modes()
+        XCTAssertEqual(modes.map(\.id), ["fast", "build", "future"])
+        XCTAssertEqual(modes[0].summary, "Quick responses")
+        XCTAssertEqual(modes[0].iconHint, "lightning")
+        XCTAssertTrue(modes[0].isAvailable)
+        XCTAssertEqual(modes[1].badgeText, "BETA")
+        XCTAssertEqual(modes[1].iconHint, "hammer")
+        XCTAssertEqual(modes[1].minimumSubscriptionTier, "TIER_SUPERGROK")
+        XCTAssertEqual(modes[1].unavailableReason, "Upgrade required")
+        XCTAssertFalse(modes[1].isAvailable)
+        XCTAssertFalse(modes[2].isAvailable)
+        XCTAssertNotNil(modes[2].availabilityExplanation)
+    }
+
     @MainActor func testGeneralHistoryExcludesProjectsForSearchAndPagination() async throws {
         FixtureProtocol.handler = { request in
             let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
