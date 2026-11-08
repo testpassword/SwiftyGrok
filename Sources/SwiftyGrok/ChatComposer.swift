@@ -93,13 +93,7 @@ import GrokCore
 
     private func composerActions(compact: Bool) -> some View {
             HStack(spacing: compact ? 8 : 12) {
-                Button { showFilePicker = true } label: {
-                    if store.isReadingFiles { ProgressView().controlSize(.small).frame(width: 30, height: 30) }
-                    else { Image(systemName: "plus").font(.system(size: 18, weight: .medium)).frame(width: 30, height: 30) }
-                }
-                .buttonStyle(.plain).contentShape(Circle())
-                .help(L10n.text("Attach files")).accessibilityLabel(L10n.text("Attach files"))
-                .disabled(store.isSending || store.isReadingFiles)
+                AttachmentPickerButton(store: store) { showFilePicker = true }
                 ModePickerButton(store: store, compact: compact)
                 if store.selectedProjectID == nil && (store.selectedConversationID == nil || store.isTemporary) {
                     Toggle(isOn: Binding(get: { store.isTemporary }, set: { store.setTemporary($0) })) {
@@ -214,14 +208,14 @@ private extension ChatMode {
     @FocusState private var focused: String?
 
     private func rowHeight(_ mode: ChatMode) -> CGFloat {
-        guard !mode.summary.isEmpty else { return 36 }
+        guard !mode.summary.isEmpty else { return 46 }
         // Text width after the popover padding, row insets, icons and spacing.
         let bounds = (mode.summary as NSString).boundingRect(
-            with: NSSize(width: 252, height: CGFloat.greatestFiniteMagnitude),
+            with: NSSize(width: 240, height: CGFloat.greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: NSFont.systemFont(ofSize: 12)]
         )
-        return 36 + min(30, ceil(bounds.height))
+        return max(46, 36 + min(30, ceil(bounds.height)))
     }
 
     var body: some View {
@@ -257,7 +251,9 @@ private extension ChatMode {
     private func row(_ mode: ChatMode) -> some View {
         Button { select(mode.id) } label: {
             HStack(alignment: .center, spacing: 12) {
-                Image(systemName: mode.symbolName).font(.system(size: 20)).frame(width: 26)
+                Image(systemName: mode.symbolName).font(.system(size: 18, weight: .medium))
+                    .frame(width: 38, height: 38)
+                    .background(.primary.opacity(0.07), in: Circle())
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(mode.name).font(.system(size: 14, weight: .medium)).lineLimit(1)

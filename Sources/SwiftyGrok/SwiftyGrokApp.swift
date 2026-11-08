@@ -62,6 +62,7 @@ struct SwiftyGrokApp: App {
         self.app = app
         quickInput = app.quickInput
         ReplyNotifications.shared.configure { [weak app] id in app?.openReplyNotification(id) }
+        WindowScreenshotShortcut.shared.configure { [weak app] in app?.captureWindowScreenshot() }
         if pendingWidgetRefresh { pendingWidgetRefresh = false; app.openWidgetSettings() }
         if !pendingFileURLs.isEmpty {
             let urls = pendingFileURLs
@@ -94,6 +95,7 @@ struct SwiftyGrokApp: App {
         appearanceObservation = nil
         NotificationCenter.default.removeObserver(self)
         quickInput?.stop()
+        WindowScreenshotShortcut.shared.stop()
         UsageMonitor.shared.stop()
     }
     func applicationWillFinishLaunching(_ notification: Notification) {

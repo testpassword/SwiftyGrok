@@ -8,6 +8,7 @@ import GrokUsage
     @State private var selection: Category? = .appearance
     @State private var appearance = AppearanceSettings.shared
     @State private var behavior = BehaviorSettings.shared
+    @State private var screenshotShortcut = WindowScreenshotShortcut.shared
     @Environment(\.colorScheme) private var colorScheme
 
     init(showWidgets: Bool = false) { _selection = State(initialValue: showWidgets ? .widgets : .appearance) }
@@ -25,7 +26,10 @@ import GrokUsage
                 Label(category.title, systemImage: category.icon).tag(category)
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .padding(.top, SettingsWindowLayout.titlebarHeight)
             .frame(width: 200)
+            .background(SidebarMaterial())
             Divider()
             Group {
                 if selection == .appearance {
@@ -40,7 +44,8 @@ import GrokUsage
             }
             .background(appearance.theme.settingsBackground)
         }
-        .frame(width: 720, height: 480)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container)
         .modifier(AppAppearance())
     }
 
@@ -111,6 +116,21 @@ import GrokUsage
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section {
+                Toggle(L10n.text("Window screenshot shortcut"), isOn: Binding(
+                    get: { behavior.windowScreenshotEnabled }, set: { behavior.setWindowScreenshotEnabled($0) }
+                ))
+                Text(L10n.text("Press left ⌘ + right ⌘ to attach a screenshot of the active window."))
+                    .font(.callout).foregroundStyle(.secondary)
+                if behavior.windowScreenshotEnabled && screenshotShortcut.needsInputMonitoring {
+                    Button(L10n.text("Allow Input Monitoring…")) { screenshotShortcut.requestInputMonitoring() }
+                    Text(L10n.text("Input Monitoring is required for the global shortcut. Screen recording access is requested when taking the first screenshot."))
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                if let error = screenshotShortcut.errorMessage {
+                    Text(error).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            Section {
                 Button(L10n.text("Configure Finder extension…")) {
                     FIFinderSyncController.showExtensionManagementInterface()
                 }
@@ -149,24 +169,39 @@ import GrokUsage
     }
 }
 
-@MainActor final class SettingsWindowController: NSWindowController {
+@MainActor private enum SettingsWindowLayout {
+    static let standardStyle: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
+    // Preserve the previous outer size while extending content under the title bar.
+    static let size = NSWindow.frameRect(forContentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
+                                         styleMask: standardStyle).size
+    static let titlebarHeight = size.height - 480
+}
+
+@MainActor final class SettingsWindowController: NSWindowController, NSWindowDelegate {
+    private var isPresentingModally = false
+
     init() {
-        let size = NSSize(width: 720, height: 480)
+        let size = SettingsWindowLayout.size
         let window = SettingsWindow(contentRect: NSRect(origin: .zero, size: size),
-                                    styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+                                    styleMask: SettingsWindowLayout.standardStyle.union(.fullSizeContentView),
+                                    backing: .buffered, defer: false)
         window.identifier = NSUserInterfaceItemIdentifier("settings")
         window.title = L10n.text("Settings")
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.collectionBehavior = [.fullScreenNone]
         window.contentViewController = NSHostingController(rootView: SettingsView())
         window.toolbar = nil
-        window.setContentSize(size)
-        window.contentMinSize = size
-        window.contentMaxSize = size
+        // Use outer-frame sizing consistently with fullSizeContentView.
+        window.minSize = size
+        window.maxSize = size
+        window.setFrame(NSRect(origin: window.frame.origin, size: size), display: false)
         super.init(window: window)
+        window.delegate = self
         configureButtons()
         window.center()
     }
@@ -175,10 +210,23 @@ import GrokUsage
     required init?(coder: NSCoder) { fatalError("Use init()") }
 
     func show() {
+        guard let window else { return }
         configureButtons()
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        guard !isPresentingModally else { return }
+        isPresentingModally = true
+        defer {
+            isPresentingModally = false
+            window.orderOut(nil)
+        }
+        NSApp.runModal(for: window)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard isPresentingModally, NSApp.modalWindow === window else { return }
+        NSApp.stopModal()
     }
 
     func showWidgets() {

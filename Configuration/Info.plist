@@ -9,8 +9,9 @@
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleLocalizations</key><array><string>ru</string><string>en</string></array>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.2.0</string>
-    <key>CFBundleVersion</key><string>53</string>
+    <key>CFBundleShortVersionString</key><string>1.3.0</string>
+    <key>CFBundleVersion</key><string>61</string>
+    <key>NSCameraUsageDescription</key><string>Take a photo to attach to your Grok message.</string>
     <key>CFBundleURLTypes</key><array><dict>
         <key>CFBundleURLName</key><string>app.swiftygrok.widgets</string>
         <key>CFBundleURLSchemes</key><array><string>swiftygrok</string></array>

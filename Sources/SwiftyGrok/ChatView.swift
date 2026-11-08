@@ -185,11 +185,11 @@ import UniformTypeIdentifiers
     }
 
     @ViewBuilder private var sidebar: some View {
-        VStack(spacing: 0) {
-            projectsHeader
+        Group {
             if #available(macOS 26.0, *) {
                 historyList
                     .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
+                    .scrollEdgeEffectHidden(false, for: .top)
                     .safeAreaBar(edge: .bottom, spacing: 0) { historyControls }
             } else {
                 historyList
@@ -201,6 +201,11 @@ import UniformTypeIdentifiers
 
     private var historyList: some View {
         List {
+            projectsHeader
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            Group {
                 if projectsExpanded, let projects = app.projects {
                     ForEach(projects.items) { project in
                         projectRow(project, projects: projects)
@@ -236,12 +241,13 @@ import UniformTypeIdentifiers
                         .disabled(store.isLoadingHistory)
                         .listRowSeparator(.hidden)
                 }
+            }
+            .disabled(store.isSending)
         }
             .listStyle(.plain).scrollContentBackground(.hidden)
             .focusable().focused($historyFocused).focusEffectDisabled()
             .background(HistoryKeyboardShortcuts(onKeyDown: handleHistoryShortcut).frame(maxWidth: .infinity, maxHeight: .infinity))
             .environment(\.defaultMinListRowHeight, 38)
-            .disabled(store.isSending)
             .onKeyPress(.upArrow) { moveHistorySelection(-1) }
             .onKeyPress(.downArrow) { moveHistorySelection(1) }
             .overlay {
@@ -663,7 +669,7 @@ struct ComposerSendStyle: ButtonStyle {
 
 /// Use the system sidebar material so wallpaper tint, contrast and accessibility
 /// preferences are applied by AppKit rather than an opaque SwiftUI background.
-private struct SidebarMaterial: NSViewRepresentable {
+struct SidebarMaterial: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
         view.material = .sidebar

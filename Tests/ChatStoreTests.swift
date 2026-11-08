@@ -421,6 +421,47 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertEqual(connected.draftFiles.map(\.name), [file.lastPathComponent])
     }
 
+    @MainActor func testGeneratedAttachmentPreservesDraftAndWaitsForExplicitSend() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        store.draft = "Question about this window"
+        let file = DraftFile(name: "Screenshot.png", mimeType: "image/png", data: Data([1, 2, 3]))
+        await store.importFiles(resolvingDraftFiles: { [file] })
+        XCTAssertEqual(store.draft, "Question about this window")
+        XCTAssertEqual(store.draftFiles, [file])
+        XCTAssertTrue(service.calls.isEmpty)
+        XCTAssertTrue(service.uploads.isEmpty)
+        XCTAssertFalse(store.isReadingFiles)
+    }
+
+    @MainActor func testGeneratedAttachmentCannotLeakIntoAnotherDraft() async {
+        let store = ChatStore(service: FakeService())
+        var pending: CheckedContinuation<[DraftFile], Never>?
+        let importing = Task {
+            await store.importFiles(resolvingDraftFiles: {
+                await withCheckedContinuation { pending = $0 }
+            })
+        }
+        while pending == nil { await Task.yield() }
+        XCTAssertTrue(store.isReadingFiles)
+        store.newChat()
+        pending?.resume(returning: [DraftFile(name: "old-window.png", mimeType: "image/png", data: Data([1]))])
+        await importing.value
+        XCTAssertTrue(store.draftFiles.isEmpty)
+        XCTAssertNil(store.error)
+        XCTAssertFalse(store.isReadingFiles)
+    }
+
+    @MainActor func testCancelledGeneratedAttachmentDoesNotChangeTheDraft() async {
+        let store = ChatStore(service: FakeService())
+        store.draft = "Keep this text"
+        await store.importFiles(resolvingDraftFiles: { throw CancellationError() })
+        XCTAssertEqual(store.draft, "Keep this text")
+        XCTAssertTrue(store.draftFiles.isEmpty)
+        XCTAssertNil(store.error)
+        XCTAssertFalse(store.isReadingFiles)
+    }
+
     @MainActor func testImportedFilesKeepBytesAndWaitForExplicitSend() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

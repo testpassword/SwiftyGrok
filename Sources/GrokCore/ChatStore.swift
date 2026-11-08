@@ -94,22 +94,33 @@ public final class ChatStore {
 
     /// Reserve the draft before asynchronous drop resolution or file reading.
     public func importFiles(resolvingURLs resolve: @MainActor () async throws -> [URL]) async {
-        guard canAttachFiles else { return }
         let generation = fileImportGeneration
         let session = sessionGeneration
         let remaining = DraftFile.maximumTotalSize - draftFiles.reduce(0) { $0 + $1.data.count }
+        await importFiles(resolvingDraftFiles: {
+            let urls = try await resolve()
+            try Task.checkCancellation()
+            guard generation == fileImportGeneration, session == sessionGeneration else { throw CancellationError() }
+            return try await Task.detached(priority: .userInitiated) {
+                try DraftFileReader.read(urls, maximumBytes: remaining)
+            }.value
+        })
+    }
+
+    /// Import generated attachments with the same draft/session guards as files.
+    public func importFiles(resolvingDraftFiles resolve: @MainActor () async throws -> [DraftFile]) async {
+        guard canAttachFiles else { return }
+        let generation = fileImportGeneration
+        let session = sessionGeneration
         isReadingFiles = true
         defer { isReadingFiles = false }
         do {
-            let urls = try await resolve()
-            try Task.checkCancellation()
-            guard generation == fileImportGeneration, session == sessionGeneration else { return }
-            let files = try await Task.detached(priority: .userInitiated) {
-                try DraftFileReader.read(urls, maximumBytes: remaining)
-            }.value
+            let files = try await resolve()
             try Task.checkCancellation()
             guard generation == fileImportGeneration, session == sessionGeneration else { return }
             addFiles(files)
+        } catch is CancellationError {
+            return
         } catch {
             guard !Task.isCancelled, generation == fileImportGeneration, session == sessionGeneration else { return }
             presentError(error)

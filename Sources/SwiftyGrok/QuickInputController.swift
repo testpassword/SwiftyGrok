@@ -68,6 +68,7 @@ import GrokCore
 
     func show() {
         guard BehaviorSettings.shared.quickInputEnabled else { return }
+        guard NSApp.modalWindow == nil else { openMain(); return }
         guard let mainStore = app?.store, !mainStore.requiresLogin else { openMain(); return }
         if draftStore == nil { draftStore = mainStore.makeNewConversationStore() }
         guard let draftStore else { return }
@@ -96,6 +97,8 @@ import GrokCore
     }
 
     func hide() { panel?.orderOut(nil) }
+
+    var attachmentStore: ChatStore? { panel?.isVisible == true ? draftStore : nil }
 
     func windowDidMove(_ notification: Notification) {
         guard let moved = notification.object as? QuickInputPanel, moved === panel else { return }
@@ -152,6 +155,11 @@ import GrokCore
     }
 
     func openMain() {
+        if let modal = NSApp.modalWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            modal.makeKeyAndOrderFront(nil)
+            return
+        }
         showMain?()
         NSApp.activate(ignoringOtherApps: true)
         DispatchQueue.main.async {

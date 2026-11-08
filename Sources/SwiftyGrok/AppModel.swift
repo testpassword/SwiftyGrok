@@ -20,6 +20,7 @@ final class AppModel {
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private let finderAttachments = FinderAttachmentInbox()
     @ObservationIgnored private var finderImportTask: Task<Void, Never>?
+    @ObservationIgnored private var screenshotTask: Task<Void, Never>?
     @ObservationIgnored private var pendingNotificationConversationID: String?
     @ObservationIgnored private let replyNotifications = ReplyNotifications.shared
 
@@ -75,6 +76,34 @@ final class AppModel {
         }
     }
 
+    func captureWindowScreenshot() {
+        guard screenshotTask == nil else { return }
+        guard !isRestoring, !isConnecting, !showLogin,
+              let destination = quickInput.attachmentStore ?? store, !destination.requiresLogin else {
+            quickInput.openMain()
+            if store?.requiresLogin == true { showLogin = true }
+            return
+        }
+        do {
+            guard destination.canAttachFiles else { throw WindowScreenshotError.draftBusy }
+            let target = try WindowScreenshotTarget.frontmost()
+            screenshotTask = Task { [weak self] in
+                defer { self?.screenshotTask = nil }
+                await destination.importFiles(resolvingDraftFiles: { [target] in
+                    [try await target.capture()]
+                })
+                guard let self, !Task.isCancelled else { return }
+                if store === destination {
+                    quickInput.hide()
+                    quickInput.openMain()
+                } else if quickInput.attachmentStore === destination { quickInput.show() }
+            }
+        } catch {
+            destination.error = DisplayError(error)
+            if store === destination { quickInput.hide(); quickInput.openMain() }
+        }
+    }
+
     func openSettings() {
         guard !showLogin else { return }
         quickInput.hide()
@@ -85,8 +114,8 @@ final class AppModel {
     func openWidgetSettings() {
         quickInput.hide()
         if settingsWindow == nil { settingsWindow = SettingsWindowController() }
-        settingsWindow?.showWidgets()
         Task { await UsageMonitor.shared.refresh() }
+        settingsWindow?.showWidgets()
     }
 
     func restore() async {
@@ -180,6 +209,7 @@ final class AppModel {
     }
 
     private func stopConversations() {
+        screenshotTask?.cancel()
         projects?.shutdown()
         projects = nil
         quickInput.reset()

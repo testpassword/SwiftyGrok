@@ -18,16 +18,20 @@ enum MessageSendShortcut: String, CaseIterable, Identifiable {
 @MainActor @Observable final class BehaviorSettings {
     static let shared = BehaviorSettings()
     static let quickInputEnabledDidChange = Notification.Name("SwiftyGrok.quickInputEnabledDidChange")
+    static let windowScreenshotEnabledDidChange = Notification.Name("SwiftyGrok.windowScreenshotEnabledDidChange")
     private(set) var sendShortcut: MessageSendShortcut
     private(set) var quickInputEnabled: Bool
+    private(set) var windowScreenshotEnabled: Bool
     @ObservationIgnored private let defaults: UserDefaults
     private static let sendShortcutKey = "behavior.sendShortcut"
     private static let quickInputKey = "behavior.quickInputEnabled"
+    private static let windowScreenshotKey = "behavior.windowScreenshotEnabled"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         sendShortcut = defaults.string(forKey: Self.sendShortcutKey).flatMap(MessageSendShortcut.init(rawValue:)) ?? .commandEnter
         quickInputEnabled = defaults.object(forKey: Self.quickInputKey) as? Bool ?? true
+        windowScreenshotEnabled = defaults.object(forKey: Self.windowScreenshotKey) as? Bool ?? true
     }
 
     func setSendShortcut(_ shortcut: MessageSendShortcut) {
@@ -41,5 +45,12 @@ enum MessageSendShortcut: String, CaseIterable, Identifiable {
         quickInputEnabled = enabled
         defaults.set(enabled, forKey: Self.quickInputKey)
         NotificationCenter.default.post(name: Self.quickInputEnabledDidChange, object: self)
+    }
+
+    func setWindowScreenshotEnabled(_ enabled: Bool) {
+        guard windowScreenshotEnabled != enabled else { return }
+        windowScreenshotEnabled = enabled
+        defaults.set(enabled, forKey: Self.windowScreenshotKey)
+        NotificationCenter.default.post(name: Self.windowScreenshotEnabledDidChange, object: self)
     }
 }
