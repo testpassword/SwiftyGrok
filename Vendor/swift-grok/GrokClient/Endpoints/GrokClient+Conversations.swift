@@ -14,8 +14,10 @@ extension GrokClient {
     }
 
     /// GrokMac: retain the server cursor instead of discarding it in listConversations.
-    public func listConversationPage(pageSize: Int = 100, pageToken: String? = nil, searchQuery: String? = nil) async throws -> ConversationsResponse {
+    public func listConversationPage(pageSize: Int = 100, pageToken: String? = nil, searchQuery: String? = nil, workspaceId: String? = nil, excludeProjects: Bool? = nil) async throws -> ConversationsResponse {
         var items = [URLQueryItem(name: "pageSize", value: String(pageSize))]
+        if let excludeProjects { items.append(URLQueryItem(name: "excludeProjects", value: String(excludeProjects))) }
+        if let workspaceId, !workspaceId.isEmpty { items.append(URLQueryItem(name: "workspaceId", value: workspaceId)) }
         if let pageToken, !pageToken.isEmpty { items.append(URLQueryItem(name: "pageToken", value: pageToken)) }
         if let query = searchQuery?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty {
             items.append(URLQueryItem(name: "searchQuery", value: query))

@@ -15,6 +15,13 @@ import UniformTypeIdentifiers
     @State private var chatToDelete: ChatSummary?
     @State private var showDelete = false
     @State private var shareTarget: ConversationShareTarget?
+    @State private var showCreateProject = false
+    @State private var projectToRename: GrokProject?
+    @State private var projectToDelete: GrokProject?
+    @State private var showDeleteProject = false
+    @AppStorage("projects.expanded") private var projectsExpanded = true
+    @State private var expandedProjectIDs: Set<String> = []
+    @State private var composerFocusRequest: UUID?
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
     @FocusState private var searchFocused: Bool
     @FocusState private var historyFocused: Bool
@@ -31,11 +38,22 @@ import UniformTypeIdentifiers
         } detail: {
             VStack(spacing: 0) {
                 if let error = store.error { errorBanner(error) }
+                if let projects = app.projects, let error = projects.actionError, projectToRename == nil {
+                    HStack(spacing: 12) {
+                        Text(error.message).font(.callout).textSelection(.enabled)
+                        Spacer(minLength: 0)
+                        if error.needsLogin {
+                            Button(L10n.text("Sign in again")) { app.showLogin = true }
+                        }
+                        Button { projects.clearActionError() } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.plain).accessibilityLabel(L10n.text("Close"))
+                    }.padding(12).background(.thinMaterial)
+                }
                 conversation
             }
             .background(appearance.theme.chatBackground.ignoresSafeArea())
             .modifier(ChatFileDropTarget(store: store))
-            .navigationTitle(store.title)
+            .navigationTitle(store.selectedConversationID == nil ? selectedProject?.name ?? store.title : store.title)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     if store.isLoadingMessages { ProgressView().controlSize(.small) }
@@ -65,6 +83,26 @@ import UniformTypeIdentifiers
                         }
                         .help(L10n.text("Share")).accessibilityLabel(L10n.text("Share"))
                         .disabled(store.isSending || store.isLoadingMessages || store.needsReload || store.selectedLeafID == nil || store.updatingConversations.contains(id))
+                        if !projectTargets.isEmpty {
+                            Menu {
+                                ForEach(projectTargets) { project in
+                                    Button { moveConversation(id, to: project.id) } label: {
+                                        Label { Text(project.name) } icon: { ProjectBadge(encoded: project.icon) }
+                                    }
+                                }
+                            } label: {
+                                Label(L10n.text("Move to project"), systemImage: "folder.badge.plus")
+                            }
+                            .help(L10n.text("Move to project"))
+                            .disabled(!canMoveConversation(id))
+                        }
+                        if let projectID = store.selectedProjectID {
+                            Button { removeConversation(id, from: projectID) } label: {
+                                Label(L10n.text("Remove from project"), systemImage: "folder.badge.minus")
+                            }
+                            .help(L10n.text("Remove from project"))
+                            .disabled(!canMoveConversation(id))
+                        }
                         Button(role: .destructive) {
                             chatToDelete = ChatSummary(id: id, title: store.title); showDelete = true
                         } label: {
@@ -76,9 +114,20 @@ import UniformTypeIdentifiers
                 }
             }
         }
+        .focusedSceneValue(\.chatSearch, activateSearch)
         .task(id: store.selectedConversationID) { await store.loadSelectedConversation() }
         .task { await store.loadModes() }
         .task { await store.loadProfile() }
+        .task { await app.projects?.load(ifNeeded: true) }
+        .onChange(of: app.projects?.items.map(\.id) ?? []) { _, ids in
+            if let id = store.selectedProjectID, !ids.contains(id), app.projects?.isLoading == false { store.leaveProject(id) }
+        }
+        .sheet(isPresented: $showCreateProject) {
+            if let projects = app.projects { CreateProjectSheet(projects: projects) }
+        }
+        .sheet(item: $projectToRename) { project in
+            if let projects = app.projects { RenameProjectSheet(project: project, projects: projects) }
+        }
         .sheet(item: $shareTarget) { target in ConversationShareSheet(target: target, store: store) }
         .task(id: store.search) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
@@ -86,6 +135,14 @@ import UniformTypeIdentifiers
         }
         .confirmationDialog(L10n.text("Sign out of Grok? The session will be removed from Keychain."), isPresented: $confirmSignOut) {
             Button(L10n.text("Sign out"), role: .destructive) { app.signOut() }
+        }
+        .confirmationDialog(L10n.text("Delete project?"), isPresented: $showDeleteProject, titleVisibility: .visible, presenting: projectToDelete) { project in
+            Button(L10n.text("Delete"), role: .destructive) {
+                Task { if await app.projects?.delete(id: project.id) == true { await store.refreshHistory() } }
+            }
+            Button(L10n.text("Cancel"), role: .cancel) { projectToDelete = nil }
+        } message: { project in
+            Text(L10n.format("“%@” will be deleted.", project.name))
         }
         .alert(L10n.text("Rename chat"), isPresented: $showRename) {
             TextField(L10n.text("Title"), text: $renameTitle)
@@ -128,7 +185,8 @@ import UniformTypeIdentifiers
     }
 
     @ViewBuilder private var sidebar: some View {
-        Group {
+        VStack(spacing: 0) {
+            projectsHeader
             if #available(macOS 26.0, *) {
                 historyList
                     .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
@@ -143,54 +201,35 @@ import UniformTypeIdentifiers
 
     private var historyList: some View {
         List {
+                if projectsExpanded, let projects = app.projects {
+                    ForEach(projects.items) { project in
+                        projectRow(project, projects: projects)
+                            .task(id: "\(expandedProjectIDs.contains(project.id))-\(projects.conversationRevisions[project.id, default: 0])") {
+                                guard expandedProjectIDs.contains(project.id) else { return }
+                                if let chats = projects.conversations[project.id] {
+                                    store.registerProjectConversations(chats)
+                                } else {
+                                    await loadProjectConversations(project.id)
+                                }
+                            }
+                        if expandedProjectIDs.contains(project.id) {
+                            projectChatRows(project, projects: projects)
+                        }
+                    }
+                    if projects.isLoading {
+                        ProgressView().controlSize(.small).frame(maxWidth: .infinity).listRowSeparator(.hidden)
+                    } else if let error = projects.loadError {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(error.message).font(.caption).foregroundStyle(.secondary)
+                            Button(L10n.text("Retry")) { Task { await projects.load() } }
+                        }.listRowSeparator(.hidden)
+                    } else if projects.items.isEmpty {
+                        Text(L10n.text("No projects yet")).font(.caption).foregroundStyle(.secondary)
+                            .listRowSeparator(.hidden)
+                    }
+                }
                 ForEach(store.conversations) { chat in
-                  Button { store.select(chat.id); historyFocused = true } label: {
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(chat.title).font(.system(size: 13)).lineLimit(2)
-                            if chat.isPinned {
-                                Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(.secondary)
-                                    .accessibilityLabel(L10n.text("Pinned"))
-                            }
-                            if store.updatingConversations.contains(chat.id) { ProgressView().controlSize(.mini) }
-                        }
-                        if let date = chat.modifiedAt {
-                            if Calendar.current.isDateInToday(date) {
-                                Text(date, format: .dateTime.hour().minute()).font(.caption).foregroundStyle(.secondary)
-                            } else {
-                                Text(date, format: .dateTime.day().month().year()).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 7).padding(.horizontal, 9)
-                  }
-                    .buttonStyle(HistoryRowStyle(selected: store.selectedConversationID == chat.id))
-                    .overlay {
-                        ConversationContextMenu(pinned: chat.isPinned,
-                                                enabled: !store.isSending && !store.updatingConversations.contains(chat.id),
-                                                sharingEnabled: !store.requiresLogin && (chat.id != store.selectedConversationID ||
-                                                    (!store.isLoadingMessages && !store.needsReload && store.selectedLeafID != nil))) {
-                            Task { await store.pinConversation(id: chat.id, pinned: !chat.isPinned) }
-                        } rename: {
-                            chatToRename = chat; renameTitle = chat.title; showRename = true
-                        } openInBrowser: {
-                            if let url = URL(string: "https://grok.com/c/\(chat.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? chat.id)") {
-                                openURL(url)
-                            }
-                        } share: {
-                            shareTarget = ConversationShareTarget(id: chat.id, title: chat.title,
-                                                                  responseID: chat.id == store.selectedConversationID ? store.selectedLeafID : nil)
-                        } delete: {
-                            chatToDelete = chat; showDelete = true
-                        }
-                    }
-                    .disabled(store.updatingConversations.contains(chat.id))
-                    .accessibilityValue(store.selectedConversationID == chat.id ? L10n.text("Selected") : "")
-                    .id(chat.id)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 1, leading: 5, bottom: 1, trailing: 5))
-                    .listRowBackground(Color.clear)
+                    conversationRow(chat)
                 }
                 if store.hasMoreHistory {
                     Button(L10n.text("Load more")) { Task { await store.refreshHistory(loadMore: true) } }
@@ -206,25 +245,158 @@ import UniformTypeIdentifiers
             .onKeyPress(.upArrow) { moveHistorySelection(-1) }
             .onKeyPress(.downArrow) { moveHistorySelection(1) }
             .overlay {
-                if store.conversations.isEmpty && !store.isLoadingHistory {
+                if store.conversations.isEmpty && !store.isLoadingHistory && (!projectsExpanded || app.projects?.items.isEmpty != false) {
                     Text(store.search.isEmpty ? L10n.text("Your conversations will appear here") : L10n.text("No results"))
                         .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(24)
                 }
             }
     }
 
+    private func projectRow(_ project: GrokProject, projects: ProjectStore) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                store.selectProject(project.id)
+                historyFocused = false
+                searchFocused = false
+                composerFocusRequest = UUID()
+            } label: {
+                HStack(spacing: 8) {
+                    ProjectBadge(encoded: project.icon)
+                    Text(project.name).font(.system(size: 13)).lineLimit(1)
+                    Spacer(minLength: 0)
+                }.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(projects.updatingProjectID == project.id)
+            .accessibilityAddTraits(store.selectedProjectID == project.id && store.selectedConversationID == nil ? .isSelected : [])
+            if projects.updatingProjectID == project.id { ProgressView().controlSize(.mini) }
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if !expandedProjectIDs.insert(project.id).inserted { expandedProjectIDs.remove(project.id) }
+                }
+            } label: {
+                Image(systemName: expandedProjectIDs.contains(project.id) ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(L10n.format(expandedProjectIDs.contains(project.id) ? "Collapse %@" : "Expand %@", project.name))
+        }
+        .padding(.horizontal, 9).padding(.vertical, 4)
+        .background(store.selectedProjectID == project.id && store.selectedConversationID == nil ? Color.accentColor.opacity(0.16) : .clear,
+                    in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
+        .overlay {
+            ProjectContextMenu(enabled: !projects.isBusy) {
+                projectToRename = project
+            } delete: {
+                projectToDelete = project
+                showDeleteProject = true
+            }
+        }
+        .help(project.description)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 1, leading: 5, bottom: 1, trailing: 5))
+        .listRowBackground(Color.clear)
+    }
+
+    @ViewBuilder private func projectChatRows(_ project: GrokProject, projects: ProjectStore) -> some View {
+        let chats = projects.conversations[project.id] ?? []
+        ForEach(chats) { chat in
+            conversationRow(chat, scope: "project-\(project.id)", indentation: 24, projectID: project.id)
+        }
+        if projects.loadingConversations.contains(project.id) {
+            ProgressView().controlSize(.mini).frame(maxWidth: .infinity).listRowSeparator(.hidden)
+        } else if let error = projects.conversationErrors[project.id] {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(error.message).font(.caption).foregroundStyle(.secondary)
+                Button(L10n.text("Retry")) { Task { await loadProjectConversations(project.id) } }
+            }.padding(.leading, 24).listRowSeparator(.hidden)
+        } else if projects.conversations[project.id] != nil && chats.isEmpty {
+            Text(L10n.text("No chats in this project")).font(.caption).foregroundStyle(.secondary)
+                .padding(.leading, 24).listRowSeparator(.hidden)
+        } else if projects.hasMoreConversations(in: project.id) {
+            Button(L10n.text("Load more")) { Task { await loadProjectConversations(project.id, loadMore: true) } }
+                .padding(.leading, 24).listRowSeparator(.hidden)
+        }
+    }
+
+    private func loadProjectConversations(_ id: String, loadMore: Bool = false) async {
+        guard let projects = app.projects else { return }
+        await projects.loadConversations(projectID: id, loadMore: loadMore)
+        store.registerProjectConversations(projects.conversations[id] ?? [])
+    }
+
+    private func conversationRow(_ summary: ChatSummary, scope: String = "history", indentation: CGFloat = 0, projectID: String? = nil) -> some View {
+        let chat = store.summary(id: summary.id) ?? summary
+        return Button { store.select(chat.id, projectID: projectID); historyFocused = true } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(chat.title).font(.system(size: 13)).lineLimit(2)
+                    if chat.isPinned {
+                        Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(.secondary)
+                            .accessibilityLabel(L10n.text("Pinned"))
+                    }
+                    if store.updatingConversations.contains(chat.id) { ProgressView().controlSize(.mini) }
+                }
+                if let date = chat.modifiedAt {
+                    if Calendar.current.isDateInToday(date) {
+                        Text(date, format: .dateTime.hour().minute()).font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text(date, format: .dateTime.day().month().year()).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 7).padding(.leading, 9 + indentation).padding(.trailing, 9)
+        }
+            .buttonStyle(HistoryRowStyle(selected: store.selectedConversationID == chat.id))
+            .overlay {
+                ConversationContextMenu(pinned: chat.isPinned,
+                                        enabled: !store.isSending && !store.updatingConversations.contains(chat.id),
+                                        sharingEnabled: !store.requiresLogin && (chat.id != store.selectedConversationID ||
+                                            (!store.isLoadingMessages && !store.needsReload && store.selectedLeafID != nil)),
+                                        projects: projectTargets, moveEnabled: canMoveConversation(chat.id),
+                                        move: { projectID in moveConversation(chat.id, to: projectID) },
+                                        removeFromProject: projectID.map { id in { removeConversation(chat.id, from: id) } }) {
+                    Task { await store.pinConversation(id: chat.id, pinned: !chat.isPinned) }
+                } rename: {
+                    chatToRename = chat; renameTitle = chat.title; showRename = true
+                } openInBrowser: {
+                    if let url = URL(string: "https://grok.com/c/\(chat.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? chat.id)") {
+                        openURL(url)
+                    }
+                } share: {
+                    shareTarget = ConversationShareTarget(id: chat.id, title: chat.title,
+                                                          responseID: chat.id == store.selectedConversationID ? store.selectedLeafID : nil)
+                } delete: {
+                    chatToDelete = chat; showDelete = true
+                }
+            }
+            .disabled(store.updatingConversations.contains(chat.id))
+            .accessibilityValue(store.selectedConversationID == chat.id ? L10n.text("Selected") : "")
+            .id("\(scope)-\(chat.id)")
+            .listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 1, leading: 5, bottom: 1, trailing: 5))
+            .listRowBackground(Color.clear)
+    }
+
     private func moveHistorySelection(_ offset: Int) -> KeyPress.Result {
-        guard !store.isSending, !store.conversations.isEmpty else { return .ignored }
-        let current = store.conversations.firstIndex { $0.id == store.selectedConversationID } ?? (offset > 0 ? -1 : store.conversations.count)
-        let next = min(max(current + offset, 0), store.conversations.count - 1)
-        store.select(store.conversations[next].id)
+        let chats = visibleHistoryChats
+        guard !store.isSending, !chats.isEmpty else { return .ignored }
+        let current = chats.firstIndex { $0.id == store.selectedConversationID } ?? (offset > 0 ? -1 : chats.count)
+        let next = min(max(current + offset, 0), chats.count - 1)
+        let id = chats[next].id
+        let projectID = projectsExpanded ? app.projects?.items.first(where: {
+            expandedProjectIDs.contains($0.id) && app.projects?.conversations[$0.id]?.contains(where: { $0.id == id }) == true
+        })?.id : nil
+        store.select(id, projectID: projectID)
         return .handled
     }
 
     private func handleHistoryShortcut(_ event: NSEvent) -> Bool {
         guard columnVisibility != .detailOnly, !store.isSending, !store.isTemporary, !searchFocused,
-              !showRename, !showDelete, !confirmSignOut, shareTarget == nil, !app.showLogin,
-              let chat = store.conversations.first(where: { $0.id == store.selectedConversationID }),
+              !showRename, !showDelete, !confirmSignOut, !showCreateProject, projectToRename == nil,
+              !showDeleteProject, shareTarget == nil, !app.showLogin,
+              let chat = visibleHistoryChats.first(where: { $0.id == store.selectedConversationID }),
               !store.updatingConversations.contains(chat.id) else { return false }
         guard !event.isARepeat else { return true }
         switch event.keyCode {
@@ -238,6 +410,14 @@ import UniformTypeIdentifiers
         default: return false
         }
         return true
+    }
+
+    private var visibleHistoryChats: [ChatSummary] {
+        let nested = projectsExpanded ? (app.projects?.items ?? []).filter { expandedProjectIDs.contains($0.id) }
+            .flatMap { app.projects?.conversations[$0.id] ?? [] } : []
+        var seen = Set<String>()
+        return (nested + store.conversations).filter { seen.insert($0.id).inserted }
+            .map { store.summary(id: $0.id) ?? $0 }
     }
 
     private var accountButton: some View {
@@ -255,6 +435,28 @@ import UniformTypeIdentifiers
             .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
             .disabled(store.isSending).accessibilityLabel(store.accountName ?? L10n.text("Profile"))
             .help(store.accountName ?? L10n.text("Profile"))
+    }
+
+    private var projectsHeader: some View {
+        HStack(spacing: 8) {
+            Text(L10n.text("Projects")).font(.system(size: 13, weight: .semibold))
+            Button { showCreateProject = true } label: {
+                Image(systemName: "plus").font(.system(size: 12, weight: .medium)).frame(width: 22, height: 22)
+            }
+            .buttonStyle(.borderless).help(L10n.text("New project"))
+            .accessibilityLabel(L10n.text("New project"))
+            .disabled(app.projects == nil || app.projects?.isBusy == true)
+            Spacer(minLength: 8)
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) { projectsExpanded.toggle() }
+            } label: {
+                Image(systemName: projectsExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(L10n.text(projectsExpanded ? "Collapse projects" : "Expand projects"))
+        }
+        .padding(.horizontal, 14).padding(.vertical, 6)
     }
 
     private var historyControls: some View {
@@ -283,7 +485,32 @@ import UniformTypeIdentifiers
         .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 14)
     }
 
+    private func activateSearch() {
+        columnVisibility = .all
+        historyFocused = false
+        // Focus after SwiftUI has restored the sidebar when it was hidden.
+        DispatchQueue.main.async { searchFocused = true }
+    }
+
     private var searchExpanded: Bool { searchFocused || !store.search.isEmpty }
+
+    private var projectTargets: [GrokProject] { app.projects?.items ?? [] }
+    private var selectedProject: GrokProject? { app.projects?.items.first { $0.id == store.selectedProjectID } }
+
+    private func canMoveConversation(_ id: String) -> Bool {
+        !store.isSending && !store.requiresLogin && !store.updatingConversations.contains(id) &&
+        app.projects?.isBusy == false && !(store.isTemporary && store.selectedConversationID == id)
+    }
+
+    private func moveConversation(_ id: String, to projectID: String) {
+        guard canMoveConversation(id), let projects = app.projects else { return }
+        Task { _ = await store.moveConversation(id: id, to: projectID, projects: projects) }
+    }
+
+    private func removeConversation(_ id: String, from projectID: String) {
+        guard canMoveConversation(id), let projects = app.projects else { return }
+        Task { _ = await store.removeConversation(id: id, from: projectID, projects: projects) }
+    }
 
     @ViewBuilder private var newChatButton: some View {
         if #available(macOS 26.0, *) {
@@ -301,7 +528,25 @@ import UniformTypeIdentifiers
         }
     }
 
-    private var emptyConversation: some View {
+    @ViewBuilder private var emptyConversation: some View {
+        if selectedProject != nil && store.selectedConversationID == nil {
+            VStack(spacing: 18) {
+                Image(systemName: "bubble.left").font(.system(size: 32, weight: .regular))
+                    .frame(width: 88, height: 88)
+                    .background(.primary.opacity(0.06), in: Circle()).accessibilityHidden(true)
+                Text(L10n.text("Start a conversation in this project"))
+                    .font(.system(size: 22, weight: .semibold))
+                Text(L10n.text("Use this project to keep conversations and files in one place"))
+                    .font(.system(size: 16)).foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.center).frame(maxWidth: 460).padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ordinaryEmptyConversation
+        }
+    }
+
+    private var ordinaryEmptyConversation: some View {
         VStack(spacing: 16) {
             Spacer()
             if store.isTemporary {
@@ -353,7 +598,11 @@ import UniformTypeIdentifiers
     }
 
     private var composer: some View {
-        ChatComposer(store: store, followResponse: $followResponse)
+        ChatComposer(store: store, followResponse: $followResponse, focusRequest: composerFocusRequest, onSend: {
+            guard store.selectedProjectID == nil || app.projects?.updatingProjectID != store.selectedProjectID else { return }
+            store.send()
+        })
+        .disabled(store.selectedProjectID != nil && app.projects?.updatingProjectID == store.selectedProjectID)
     }
 
     private func errorBanner(_ error: DisplayError) -> some View {
@@ -473,6 +722,17 @@ private struct HistoryRowStyle: ButtonStyle {
                             Color.primary.opacity(configuration.isPressed ? 0.07 : hovering ? 0.035 : 0),
                         in: RoundedRectangle(cornerRadius: 10))
             .onHover { hovering = $0 }
+    }
+}
+
+private struct ChatSearchKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var chatSearch: (() -> Void)? {
+        get { self[ChatSearchKey.self] }
+        set { self[ChatSearchKey.self] = newValue }
     }
 }
 

@@ -37,6 +37,165 @@ private final class FixtureProtocol: URLProtocol {
 }
 
 final class GrokServiceTests: XCTestCase {
+    @MainActor func testGeneralHistoryExcludesProjectsForSearchAndPagination() async throws {
+        FixtureProtocol.handler = { request in
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "excludeProjects" }?.value, "true")
+            XCTAssertNil(query.first { $0.name == "workspaceId" })
+            return (200, Data(#"{"conversations":[],"nextPageToken":"more"}"#.utf8))
+        }
+        let service = try service()
+        _ = try await service.history(pageToken: nil, search: "")
+        _ = try await service.history(pageToken: "cursor", search: "query")
+    }
+
+    @MainActor func testRemovingProjectMembershipUsesDeleteWithoutDeletingChat() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.url?.path, "/rest/workspaces/project/conversations/chat")
+            XCTAssertNil(request.httpBody)
+            return (204, Data())
+        }
+        try await service().removeConversationFromProject(conversationID: "chat", projectID: "project")
+    }
+
+    @MainActor func testProjectReplyIncludesWorkspaceButPrivateReplyDoesNot() async throws {
+        for temporary in [false, true] {
+            for id in [nil, "chat"] as [String?] {
+                FixtureProtocol.handler = { request in
+                    let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                    XCTAssertEqual(body["workspaceIds"] as? [String], temporary ? nil : ["project"])
+                    return (200, Data((#"{"result":{"conversation":{"conversationId":"chat"},"response":{"modelResponse":{"responseId":"answer","message":"Done"}}}}"# + "\n").utf8))
+                }
+                let stream = try await service().reply(conversationID: id, parentID: id == nil ? nil : "parent", text: "Question", modeID: "fast", temporary: temporary, projectID: "project")
+                for try await _ in stream {}
+            }
+        }
+    }
+
+    @MainActor func testEmptyProjectIDCannotRequestGlobalHistory() async throws {
+        FixtureProtocol.handler = { _ in
+            XCTFail("A missing project ID must never fall back to global history")
+            return (200, Data(#"{"conversations":[]}"#.utf8))
+        }
+        do { _ = try await service().projectConversations(id: " \n", pageToken: nil); XCTFail("Expected invalid project ID") }
+        catch { XCTAssertEqual(error as? GrokError, .notFound) }
+    }
+
+    @MainActor func testProjectConversationPageUsesWorkspaceFilterAndExcludesPrivateChats() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/rest/app-chat/conversations")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "workspaceId" }?.value, "project")
+            XCTAssertNil(query.first { $0.name == "excludeProjects" })
+            XCTAssertEqual(query.first { $0.name == "pageToken" }?.value, "cursor")
+            return (200, Data(#"{"conversations":[{"conversationId":"saved","title":"Project chat","starred":true},{"conversationId":"private","title":"Private","temporary":true}],"nextPageToken":"more"}"#.utf8))
+        }
+        let page = try await service().projectConversations(id: "project", pageToken: "cursor")
+        XCTAssertEqual(page.items.map(\.id), ["saved"])
+        XCTAssertEqual(page.items.first?.title, "Project chat")
+        XCTAssertEqual(page.items.first?.isPinned, true)
+        XCTAssertEqual(page.nextPageToken, "more")
+    }
+
+    @MainActor func testProjectRenameUsesPartialPUTAndAcceptsEmptyAcknowledgement() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.url?.path, "/rest/workspaces/project")
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            XCTAssertEqual(body, ["name": "Renamed"])
+            return (204, Data())
+        }
+        try await service().renameProject(id: "project", name: " Renamed \n")
+    }
+
+    @MainActor func testProjectDeletionAndChatMoveUseWorkspaceEndpoints() async throws {
+        var calls = 0
+        FixtureProtocol.handler = { request in
+            calls += 1
+            if calls == 1 {
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(request.url?.path, "/rest/workspaces/project/conversations")
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+                XCTAssertEqual(body, ["conversationId": "chat"])
+            } else {
+                XCTAssertEqual(request.httpMethod, "DELETE")
+                XCTAssertEqual(request.url?.path, "/rest/workspaces/project")
+                XCTAssertNil(request.httpBody)
+            }
+            return (204, Data())
+        }
+        let service = try service()
+        try await service.addConversationToProject(conversationID: "chat", projectID: "project")
+        try await service.deleteProject(id: "project")
+        XCTAssertEqual(calls, 2)
+    }
+
+    @MainActor func testProjectsLoadAllPagesAndKeepServerIconAndDescription() async throws {
+        var calls = 0
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/rest/workspaces")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "orderBy" }?.value, "ORDER_BY_LAST_USE_TIME")
+            calls += 1
+            if calls == 1 {
+                XCTAssertNil(query.first { $0.name == "pageToken" })
+                return (200, Data(#"{"workspaces":[{"workspaceId":"one","name":"Work","icon":"l:briefcase:blue","customPersonality":"Research"}],"nextPageToken":"next"}"#.utf8))
+            }
+            XCTAssertEqual(query.first { $0.name == "pageToken" }?.value, "next")
+            return (200, Data(#"{"workspaces":[{"id":"two","title":"Study"},{"name":"No ID"}]}"#.utf8))
+        }
+        let projects = try await service().projects()
+        XCTAssertEqual(projects.map(\.id), ["one", "two"])
+        XCTAssertEqual(projects[0].icon, "l:briefcase:blue")
+        XCTAssertEqual(projects[0].description, "Research")
+        XCTAssertEqual(projects[1].name, "Study")
+        XCTAssertEqual(calls, 2)
+    }
+
+    @MainActor func testCreateProjectUsesWorkspacePayloadAndServerIdentity() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/rest/workspaces")
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            XCTAssertEqual(body["name"] as? String, "Study")
+            XCTAssertEqual(body["customPersonality"] as? String, "Read papers")
+            XCTAssertEqual(body["icon"] as? String, "l:graduation-cap:lime")
+            XCTAssertEqual(body["preferredModel"] as? String, "auto")
+            return (200, Data(#"{"workspace":{"workspaceId":"created","name":"Study","icon":"l:graduation-cap:lime","customPersonality":"Read papers"}}"#.utf8))
+        }
+        let project = try await service().createProject(name: " Study\n", description: "Read papers", icon: .education)
+        XCTAssertEqual(project.id, "created")
+        XCTAssertEqual(project.description, "Read papers")
+    }
+
+    @MainActor func testProjectCreationRejectsBlankNamesAndMissingServerID() async throws {
+        var calls = 0
+        FixtureProtocol.handler = { _ in calls += 1; return (200, Data(#"{"workspace":{"name":"Missing ID"}}"#.utf8)) }
+        let service = try service()
+        do {
+            _ = try await service.createProject(name: " \n", description: "", icon: .book)
+            XCTFail("Empty names must not be sent")
+        } catch { XCTAssertEqual(calls, 0) }
+        do {
+            _ = try await service.createProject(name: "Study", description: "", icon: .book)
+            XCTFail("Only a server ID can confirm creation")
+        } catch { XCTAssertTrue(error is ProjectFailure) }
+        XCTAssertEqual(calls, 1)
+    }
+
+    @MainActor func testProjectsRejectRepeatedPageTokenInsteadOfLooping() async throws {
+        var calls = 0
+        FixtureProtocol.handler = { _ in
+            calls += 1
+            return (200, Data(#"{"workspaces":[],"nextPageToken":"same"}"#.utf8))
+        }
+        do { _ = try await service().projects(); XCTFail("Repeated cursors must stop the load") }
+        catch { XCTAssertEqual(calls, 2) }
+    }
+
     @MainActor func testFileUploadAndAttachmentIDsForNewAndContinuedReplies() async throws {
         for conversationID in [nil, "chat"] as [String?] {
             var uploaded = false

@@ -49,6 +49,7 @@ public struct GrokWorkspace: Codable {
 
 public struct GrokWorkspacesResponse: Codable {
     public let workspaces: [GrokWorkspace]
+    public let nextPageToken: String?
     public let rawJSON: AnyCodable
 }
 

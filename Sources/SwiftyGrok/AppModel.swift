@@ -5,6 +5,7 @@ import GrokCore
 @MainActor @Observable
 final class AppModel {
     private(set) var store: ChatStore?
+    private(set) var projects: ProjectStore?
     private(set) var isRestoring = true
     private(set) var isConnecting = false
     var showLogin = false
@@ -40,7 +41,10 @@ final class AppModel {
         store.select(id)
     }
 
-    private func configureReplyNotifications(for store: ChatStore) {
+    private func configureStoreCallbacks(for store: ChatStore) {
+        store.onConversationUpdated = { [weak self] chat in self?.projects?.updateConversation(chat) }
+        store.onConversationDeleted = { [weak self] id in self?.projects?.removeConversation(id: id) }
+        store.onProjectConversationCreated = { [weak self] id in self?.projects?.conversationCreated(in: id) }
         store.onSendStarted = { [weak self] in self?.replyNotifications.prepareAuthorization() }
         store.onReplyCompleted = { [weak self] reply in
             self?.replyNotifications.show(reply)
@@ -134,8 +138,9 @@ final class AppModel {
         stopConversations()
         media = MessageMediaLoader(credentials: credentials)
         store = ChatStore(service: service, conversations: history.items, nextPageToken: history.nextPageToken)
+        projects = ProjectStore(service: service)
         UsageMonitor.shared.setChatService(service)
-        if let store { configureReplyNotifications(for: store) }
+        if let store { configureStoreCallbacks(for: store) }
         browser.closePopups()
         showLogin = false
     }
@@ -160,7 +165,7 @@ final class AppModel {
 
     func sendQuickConversation(_ fresh: ChatStore) {
         guard let previous = store, fresh.canSend else { return }
-        configureReplyNotifications(for: fresh)
+        configureStoreCallbacks(for: fresh)
         fresh.send()
         fresh.inheritDrafts(from: previous)
         store = fresh
@@ -175,6 +180,8 @@ final class AppModel {
     }
 
     private func stopConversations() {
+        projects?.shutdown()
+        projects = nil
         quickInput.reset()
         store?.shutdown()
         retiringStores.forEach { $0.shutdown() }

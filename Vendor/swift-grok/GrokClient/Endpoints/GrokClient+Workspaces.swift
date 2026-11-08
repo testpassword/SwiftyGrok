@@ -51,10 +51,13 @@ extension GrokClient {
     public func listWorkspacesResponse(
         options: GrokWorkspaceListOptions
     ) async throws -> GrokWorkspacesResponse {
-        let queryItems = [
+        var queryItems = [
             URLQueryItem(name: "pageSize", value: String(options.pageSize)),
             URLQueryItem(name: "orderBy", value: options.orderBy)
         ]
+        if let token = options.pageToken, !token.isEmpty {
+            queryItems.append(URLQueryItem(name: "pageToken", value: token))
+        }
         let request = try makeRequest(
             path: try endpointPath(["workspaces"], queryItems: queryItems),
             method: "GET",
@@ -65,7 +68,8 @@ extension GrokClient {
             .dictionaries(["workspaces", "data", "result", "items"])
             .map { makeResourceWorkspace(from: $0) }
 
-        return GrokWorkspacesResponse(workspaces: workspaces, rawJSON: AnyCodable(json))
+        let token = JSONLookup(json).string("nextPageToken", "next_page_token")
+        return GrokWorkspacesResponse(workspaces: workspaces, nextPageToken: token?.isEmpty == false ? token : nil, rawJSON: AnyCodable(json))
     }
 
     public func listWorkspaces(
@@ -81,6 +85,16 @@ extension GrokClient {
         options: GrokWorkspaceListOptions
     ) async throws -> [GrokWorkspace] {
         try await listWorkspacesResponse(options: options).workspaces
+    }
+
+    public func renameWorkspace(workspaceId: String, name: String) async throws {
+        let request = try makeRequest(
+            path: try endpointPath(["workspaces", workspaceId], queryItems: []),
+            method: "PUT",
+            payload: ["name": name],
+            namespace: .root
+        )
+        _ = try await jsonObject(for: request)
     }
 
     public func deleteWorkspace(workspaceId: String) async throws -> GrokWorkspaceMutationResponse {
@@ -114,6 +128,15 @@ extension GrokClient {
             .map { makeResourceWorkspace(from: $0) }
 
         return GrokWorkspaceMutationResponse(workspace: workspace, rawJSON: AnyCodable(json))
+    }
+
+    public func removeConversationFromWorkspace(workspaceId: String, conversationId: String) async throws {
+        let request = try makeRequest(
+            path: try endpointPath(["workspaces", workspaceId, "conversations", conversationId], queryItems: []),
+            method: "DELETE",
+            namespace: .root
+        )
+        _ = try await jsonObject(for: request)
     }
 
     private func firstWorkspaceMutationDictionary(from json: Any) -> [String: AnyCodable]? {

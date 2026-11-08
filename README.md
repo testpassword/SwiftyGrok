@@ -69,6 +69,7 @@ On subsequent launches, the saved session is loaded from macOS Keychain and chec
 | ⌥Space | Show or hide quick input when the main window is not focused |
 | ⌘, | Open Settings |
 | ⌘N | Start a new chat and open the main window |
+| ⌘F | Focus chat search and show the sidebar if hidden |
 | ⌘↩ | Send a message by default; insert a new line in the alternate mode |
 | ⌘R | Refresh the current chat |
 | ⇧⌘R | Refresh history |

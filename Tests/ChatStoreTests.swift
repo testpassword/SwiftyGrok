@@ -11,6 +11,7 @@ private final class FakeService: GrokServing {
     var uploadError: Error?
     var uploads: [String] = []
     var replyFiles: [[String]] = []
+    var replyProjects: [String?] = []
     var uploadHook: (() async -> Void)?
     var calls: [(String?, String?, String, String, Bool)] = []
     var threadCalls = 0
@@ -62,9 +63,10 @@ private final class FakeService: GrokServing {
         uploads.append(file.name)
         return "uploaded-\(file.name)"
     }
-    func reply(conversationID: String?, parentID: String?, text: String, modeID: String, temporary: Bool, fileIDs: [String]) async throws -> AsyncThrowingStream<ReplyEvent, Error> {
+    func reply(conversationID: String?, parentID: String?, text: String, modeID: String, temporary: Bool, fileIDs: [String], projectID: String?) async throws -> AsyncThrowingStream<ReplyEvent, Error> {
         calls.append((conversationID, parentID, text, modeID, temporary))
         replyFiles.append(fileIDs)
+        replyProjects.append(projectID)
         if let replyError { throw replyError }
         if let streamHook { return streamHook() }
         return AsyncThrowingStream { continuation in
@@ -75,6 +77,124 @@ private final class FakeService: GrokServing {
 }
 
 final class ChatStoreTests: XCTestCase {
+    @MainActor func testProjectDraftsAndFilesAreSeparateFromOrdinaryAndQuickInputDrafts() {
+        let store = ChatStore(service: FakeService())
+        store.draft = "Ordinary"
+        store.addFiles([DraftFile(name: "ordinary.txt", mimeType: "text/plain", data: Data("ordinary".utf8))])
+        store.selectProject("one")
+        XCTAssertTrue(store.draft.isEmpty)
+        XCTAssertTrue(store.draftFiles.isEmpty)
+        store.draft = "Project one"
+        store.addFiles([DraftFile(name: "one.txt", mimeType: "text/plain", data: Data("one".utf8))])
+        store.selectProject("two")
+        XCTAssertTrue(store.draft.isEmpty)
+        XCTAssertTrue(store.draftFiles.isEmpty)
+        store.draft = "Project two"
+        store.selectProject("one")
+        XCTAssertEqual(store.draft, "Project one")
+        XCTAssertEqual(store.draftFiles.map(\.name), ["one.txt"])
+        let quick = store.makeNewConversationStore()
+        XCTAssertNil(quick.selectedProjectID)
+        XCTAssertTrue(quick.draft.isEmpty)
+        XCTAssertTrue(quick.draftFiles.isEmpty)
+        quick.inheritDrafts(from: store)
+        quick.selectProject("one")
+        XCTAssertEqual(quick.draft, "Project one")
+        store.newChat()
+        XCTAssertNil(store.selectedProjectID)
+        XCTAssertEqual(store.draft, "Ordinary")
+        XCTAssertEqual(store.draftFiles.map(\.name), ["ordinary.txt"])
+    }
+
+    @MainActor func testProjectSendUsesWorkspaceAndRefreshesOnlyItsList() async throws {
+        let service = FakeService()
+        service.events = [ReplyEvent(conversationID: "created", responseID: "answer", text: "Done", isFinal: true)]
+        service.loaded = try ChatThread(responses: [ChatMessage(id: "answer", role: .assistant, text: "Done")])
+        let store = ChatStore(service: service)
+        var createdIn: [String] = []
+        store.onProjectConversationCreated = { createdIn.append($0) }
+        store.selectProject("one")
+        store.draft = "Question"
+        store.send()
+        await store.waitForSend()
+        XCTAssertEqual(service.replyProjects, ["one"])
+        XCTAssertEqual(createdIn, ["one"])
+        XCTAssertEqual(store.selectedProjectID, "one")
+        XCTAssertEqual(store.selectedConversationID, "created")
+        store.selectProject("two")
+        store.setTemporary(true)
+        XCTAssertNil(store.selectedProjectID)
+        XCTAssertTrue(store.isTemporary)
+    }
+
+    @MainActor func testRemovingProjectMembershipKeepsOpenChatAndDraft() async {
+        let service = FakeService()
+        let projectsService = ProjectFixture()
+        let projects = ProjectStore(service: projectsService)
+        await projects.load()
+        let store = ChatStore(service: service, conversations: service.history)
+        store.select("chat", projectID: "one")
+        await store.loadSelectedConversation()
+        store.draft = "Keep this"
+        let messages = store.messages
+        projectsService.failure = URLError(.notConnectedToInternet)
+        let failed = await store.removeConversation(id: "chat", from: "one", projects: projects)
+        XCTAssertFalse(failed)
+        XCTAssertEqual(store.selectedProjectID, "one")
+        projectsService.failure = nil
+        let removed = await store.removeConversation(id: "chat", from: "one", projects: projects)
+        XCTAssertTrue(removed)
+        XCTAssertNil(store.selectedProjectID)
+        XCTAssertEqual(store.selectedConversationID, "chat")
+        XCTAssertEqual(store.draft, "Keep this")
+        XCTAssertEqual(store.messages, messages)
+        XCTAssertEqual(store.conversations.map(\.id), ["chat"])
+        XCTAssertTrue(service.mutations.isEmpty)
+    }
+
+    @MainActor func testProjectOnlyChatKeepsTitleAndSupportsHistoryActions() async {
+        let service = FakeService()
+        let store = ChatStore(service: service, conversations: service.history)
+        store.registerProjectConversations([ChatSummary(id: "project-only", title: "Project chat")])
+        store.select("project-only")
+        XCTAssertEqual(store.title, "Project chat")
+        XCTAssertEqual(store.conversations.map(\.id), ["chat"])
+        var updated: ChatSummary?
+        var deleted: String?
+        store.onConversationUpdated = { updated = $0 }
+        store.onConversationDeleted = { deleted = $0 }
+        await store.renameConversation(id: "project-only", title: "Renamed")
+        XCTAssertEqual(store.title, "Renamed")
+        XCTAssertEqual(updated?.title, "Renamed")
+        await store.deleteConversation(id: "project-only")
+        XCTAssertEqual(deleted, "project-only")
+        XCTAssertNil(store.summary(id: "project-only"))
+        XCTAssertNil(store.selectedConversationID)
+    }
+
+    @MainActor func testMoveConversationPreservesSelectionDraftAndMessages() async {
+        let service = FakeService()
+        let projectsService = ProjectFixture()
+        let projects = ProjectStore(service: projectsService)
+        await projects.load()
+        let store = ChatStore(service: service, conversations: service.history)
+        store.select("chat")
+        await store.loadSelectedConversation()
+        store.draft = "Keep my draft"
+        let messages = store.messages
+        let moved = await store.moveConversation(id: "chat", to: "one", projects: projects)
+        XCTAssertTrue(moved)
+        XCTAssertEqual(projectsService.mutations, ["move:chat:one"])
+        XCTAssertTrue(store.conversations.isEmpty)
+        XCTAssertEqual(store.selectedConversationID, "chat")
+        XCTAssertEqual(store.draft, "Keep my draft")
+        XCTAssertEqual(store.messages, messages)
+        XCTAssertTrue(store.updatingConversations.isEmpty)
+        let missing = await store.moveConversation(id: "missing", to: "one", projects: projects)
+        XCTAssertFalse(missing)
+        XCTAssertEqual(projectsService.mutations.count, 1)
+    }
+
     @MainActor func testReplyCompletionIsEmittedOnceAfterTheFinalAnswer() async throws {
         let service = FakeService()
         service.events = [

@@ -93,13 +93,16 @@ public struct GrokWorkspaceCreateOptions {
 public struct GrokWorkspaceListOptions {
     public var pageSize: Int
     public var orderBy: String
+    public var pageToken: String?
 
     public init(
         pageSize: Int = 50,
-        orderBy: String = "ORDER_BY_LAST_USE_TIME"
+        orderBy: String = "ORDER_BY_LAST_USE_TIME",
+        pageToken: String? = nil
     ) {
         self.pageSize = pageSize
         self.orderBy = orderBy
+        self.pageToken = pageToken
     }
 }
 

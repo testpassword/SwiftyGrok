@@ -56,7 +56,7 @@ import GrokCore
                                 .allowsHitTesting(false)
                         }
                         ComposerTextEditor(text: $store.draft,
-                                           contextID: "\(store.isTemporary):\(store.selectedConversationID ?? "__new")",
+                                           contextID: "\(store.isTemporary):\(store.selectedProjectID ?? "__none"):\(store.selectedConversationID ?? "__new")",
                                            isEnabled: !store.isSending,
                                            focusRequest: focusRequest,
                                            sendShortcut: behavior.sendShortcut,
@@ -118,7 +118,7 @@ import GrokCore
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .disabled(store.isSending).accessibilityLabel(L10n.text("Response mode"))
-                if store.selectedConversationID == nil || store.isTemporary {
+                if store.selectedProjectID == nil && (store.selectedConversationID == nil || store.isTemporary) {
                     Toggle(isOn: Binding(get: { store.isTemporary }, set: { store.setTemporary($0) })) {
                         if compact { Image(systemName: "eye.slash").accessibilityHidden(true) }
                         else { Text(L10n.text("Private chat")) }

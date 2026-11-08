@@ -8,6 +8,7 @@ struct SwiftyGrokApp: App {
     @NSApplicationDelegateAdaptor(GrokAppDelegate.self) private var delegate
     @State private var app = AppModel()
     @State private var behavior = BehaviorSettings.shared
+    @FocusedValue(\.chatSearch) private var searchChats
     var body: some Scene {
         Window("SwiftyGrok", id: "main") {
             RootView(app: app)
@@ -32,6 +33,11 @@ struct SwiftyGrokApp: App {
                 Button(L10n.text("New chat")) { app.store?.newChat(); app.quickInput.openMain() }
                     .keyboardShortcut("n", modifiers: .command)
                     .disabled(app.store == nil || app.store?.isSending == true)
+            }
+            CommandGroup(after: .textEditing) {
+                Button(L10n.text("Search chats")) { searchChats?() }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .disabled(searchChats == nil || app.showLogin)
             }
             CommandGroup(after: .newItem) {
                 Button(L10n.text("Quick input…")) { app.quickInput.show() }

@@ -8,6 +8,10 @@ import GrokCore
     let pinned: Bool
     let enabled: Bool
     let sharingEnabled: Bool
+    let projects: [GrokProject]
+    let moveEnabled: Bool
+    let move: (String) -> Void
+    let removeFromProject: (() -> Void)?
     let pin: () -> Void
     let rename: () -> Void
     let openInBrowser: () -> Void
@@ -41,6 +45,31 @@ import GrokCore
             let sharing = item(L10n.text("Share"), symbol: "square.and.arrow.up", action: #selector(shareChat))
             sharing.isEnabled = configuration.sharingEnabled
             menu.addItem(sharing)
+            if !configuration.projects.isEmpty {
+                let move = item(L10n.text("Move to project"), symbol: "folder.badge.plus", action: #selector(moveChat(_:)))
+                let submenu = NSMenu()
+                submenu.autoenablesItems = false
+                for project in configuration.projects {
+                    let target = item(project.name, symbol: "folder", action: #selector(moveChat(_:)))
+                    target.representedObject = project.id
+                    let parts = project.icon.split(separator: ":")
+                    let icon = parts.count == 3 ? ProjectIcon(rawValue: String(parts[1])) ?? .folder : .folder
+                    target.image = NSImage(systemSymbolName: icon.symbol, accessibilityDescription: nil)?
+                        .withSymbolConfiguration(.init(paletteColors: [.controlAccentColor]))
+                    target.image?.isTemplate = false
+                    target.image?.size = NSSize(width: 16, height: 16)
+                    target.isEnabled = configuration.moveEnabled
+                    submenu.addItem(target)
+                }
+                move.submenu = submenu
+                move.isEnabled = configuration.moveEnabled
+                menu.addItem(move)
+            }
+            if configuration.removeFromProject != nil {
+                let removal = item(L10n.text("Remove from project"), symbol: "folder.badge.minus", action: #selector(removeChatFromProject))
+                removal.isEnabled = configuration.moveEnabled
+                menu.addItem(removal)
+            }
             menu.addItem(.separator())
             let deletion = item(L10n.text("Delete"), symbol: "trash", action: #selector(deleteChat))
             deletion.attributedTitle = NSAttributedString(string: deletion.title, attributes: [.foregroundColor: NSColor.systemRed])
@@ -76,6 +105,15 @@ import GrokCore
         @objc private func renameChat() { configuration?.rename() }
         @objc private func openChatInBrowser() { configuration?.openInBrowser() }
         @objc private func shareChat() { configuration?.share() }
+        @objc private func removeChatFromProject() {
+            guard configuration?.moveEnabled == true else { return }
+            configuration?.removeFromProject?()
+        }
+        @objc private func moveChat(_ sender: NSMenuItem) {
+            guard configuration?.moveEnabled == true, let id = sender.representedObject as? String,
+                  configuration?.projects.contains(where: { $0.id == id }) == true else { return }
+            configuration?.move(id)
+        }
         @objc private func deleteChat() { configuration?.delete() }
     }
 }

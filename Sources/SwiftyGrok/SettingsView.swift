@@ -52,24 +52,24 @@ import GrokUsage
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Toggle(L10n.text("Follow system transparency"), isOn: Binding(
-                            get: { appearance.quickInputFollowsSystemTransparency },
-                            set: { appearance.setQuickInputFollowsSystemTransparency($0) }
-                        ))
-                        .toggleStyle(.switch)
+                        HStack {
+                            Text(L10n.text("Follow system transparency"))
+                            Spacer()
+                            Toggle(L10n.text("Follow system transparency"), isOn: Binding(
+                                get: { appearance.quickInputFollowsSystemTransparency },
+                                set: { appearance.setQuickInputFollowsSystemTransparency($0) }
+                            ))
+                            .toggleStyle(.switch).labelsHidden().fixedSize()
+                        }
                         if !appearance.quickInputFollowsSystemTransparency {
-                            HStack {
-                                Text(L10n.text("Transparency"))
-                                Spacer()
-                                Text(appearance.quickInputTransparency, format: .percent.precision(.fractionLength(0)))
-                                    .monospacedDigit().foregroundStyle(.secondary)
-                            }
+                            Text(L10n.text("Transparency"))
                             Slider(value: Binding(
                                 get: { appearance.quickInputTransparency },
                                 set: { appearance.setQuickInputTransparency($0) }
                             ), in: 0...1, step: 0.01) {
                                 Text(L10n.text("Transparency"))
                             }
+                            .labelsHidden()
                             .accessibilityValue(Text(appearance.quickInputTransparency, format: .percent.precision(.fractionLength(0))))
                             HStack {
                                 Text(L10n.text("Opaque"))

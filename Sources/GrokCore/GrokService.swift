@@ -16,11 +16,11 @@ public protocol GrokServing: AnyObject {
     func deleteConversation(id: String) async throws
     func shareConversation(id: String, responseID: String) async throws -> URL
     func upload(file: DraftFile) async throws -> String
-    func reply(conversationID: String?, parentID: String?, text: String, modeID: String, temporary: Bool, fileIDs: [String]) async throws -> AsyncThrowingStream<ReplyEvent, Error>
+    func reply(conversationID: String?, parentID: String?, text: String, modeID: String, temporary: Bool, fileIDs: [String], projectID: String?) async throws -> AsyncThrowingStream<ReplyEvent, Error>
 }
 
 @MainActor
-public final class GrokService: GrokServing {
+public final class GrokService: GrokServing, ProjectServing {
     private let client: GrokClient
     private var assetCache: [String: MessageAttachment] = [:]
 
@@ -49,7 +49,7 @@ public final class GrokService: GrokServing {
     }
 
     public func history(pageToken: String?, search: String) async throws -> HistoryPage {
-        let page = try await client.listConversationPage(pageToken: pageToken, searchQuery: search)
+        let page = try await client.listConversationPage(pageToken: pageToken, searchQuery: search, excludeProjects: true)
         let items = page.conversations.filter { !$0.temporary }.map {
             ChatSummary(id: $0.conversationId, title: $0.title, preview: $0.preview, modifiedAt: GrokDate.parse($0.modifyTime), isPinned: $0.starred)
         }
@@ -58,6 +58,62 @@ public final class GrokService: GrokServing {
 
     public func modes() async throws -> [ChatMode] {
         try await client.listModes().filter(\.isAvailable).map { ChatMode(id: $0.id, name: $0.displayName) }
+    }
+
+    public func projects() async throws -> [GrokProject] {
+        var workspaces: [GrokWorkspace] = []
+        var token: String?
+        var consumed = Set<String>()
+        repeat {
+            try Task.checkCancellation()
+            let page = try await client.listWorkspacesResponse(options: GrokWorkspaceListOptions(pageToken: token))
+            workspaces += page.workspaces
+            token = page.nextPageToken
+            if let token, !consumed.insert(token).inserted { throw GrokError.decodingError(CocoaError(.coderReadCorrupt)) }
+        } while token != nil
+        return workspaces.compactMap { workspace in
+            guard let id = workspace.workspaceId ?? workspace.id, !id.isEmpty else { return nil }
+            return GrokProject(id: id, name: workspace.name ?? workspace.title ?? L10n.text("Untitled"),
+                               description: workspace.customPersonality ?? "", icon: workspace.icon ?? ProjectIcon.book.encodedValue)
+        }
+    }
+
+    public func createProject(name: String, description: String, icon: ProjectIcon) async throws -> GrokProject {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw ProjectFailure.missingName }
+        let result = try await client.createWorkspace(name: name, icon: icon.encodedValue, customPersonality: description, preferredModel: "auto")
+        guard let workspace = result.workspace, let id = workspace.workspaceId ?? workspace.id, !id.isEmpty else {
+            throw ProjectFailure.invalidResponse
+        }
+        return GrokProject(id: id, name: workspace.name ?? name, description: workspace.customPersonality ?? description,
+                           icon: workspace.icon ?? icon.encodedValue)
+    }
+
+    public func renameProject(id: String, name: String) async throws {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw ProjectFailure.missingName }
+        try await client.renameWorkspace(workspaceId: id, name: name)
+    }
+
+    public func projectConversations(id: String, pageToken: String?) async throws -> HistoryPage {
+        guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw GrokError.notFound }
+        let page = try await client.listConversationPage(pageToken: pageToken, workspaceId: id)
+        return HistoryPage(items: page.conversations.filter { !$0.temporary }.map {
+            ChatSummary(id: $0.conversationId, title: $0.title, preview: $0.preview,
+                        modifiedAt: GrokDate.parse($0.modifyTime), isPinned: $0.starred)
+        }, nextPageToken: page.nextPageToken)
+    }
+
+    public func deleteProject(id: String) async throws {
+        _ = try await client.deleteWorkspace(workspaceId: id)
+    }
+
+    public func addConversationToProject(conversationID: String, projectID: String) async throws {
+        _ = try await client.addConversationToWorkspace(workspaceId: projectID, conversationId: conversationID)
+    }
+
+    public func removeConversationFromProject(conversationID: String, projectID: String) async throws {
+        try await client.removeConversationFromWorkspace(workspaceId: projectID, conversationId: conversationID)
     }
 
     public func profile() async throws -> AccountProfile {
@@ -168,8 +224,10 @@ public final class GrokService: GrokServing {
         return id
     }
 
-    public func reply(conversationID: String?, parentID: String?, text: String, modeID: String, temporary: Bool = false, fileIDs: [String] = []) async throws -> AsyncThrowingStream<ReplyEvent, Error> {
-        let options = GrokMessageOptions(temporary: temporary, modeId: modeID, fileAttachments: fileIDs)
+    public func reply(conversationID: String?, parentID: String?, text: String, modeID: String, temporary: Bool = false, fileIDs: [String] = [], projectID: String? = nil) async throws -> AsyncThrowingStream<ReplyEvent, Error> {
+        if !temporary, let projectID, projectID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw GrokError.notFound }
+        let options = GrokMessageOptions(temporary: temporary, modeId: modeID, fileAttachments: fileIDs,
+                                         workspaceIds: temporary ? [] : projectID.map { [$0] } ?? [])
         let source: AsyncThrowingStream<ConversationResponse, Error>
         if let conversationID {
             source = try await client.continueConversation(conversationId: conversationID, parentResponseId: parentID, message: text, options: options)

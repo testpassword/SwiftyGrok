@@ -18,6 +18,10 @@ Local modifications:
 6. `Endpoints/GrokClient+Conversations.swift`: add partial `PUT` updates for conversation titles and starred status, using the same request format as the public Grok web client.
 7. `Endpoints/GrokClient+Conversations.swift`: publish the selected response path, retain existing team access, and obtain the public URL from sharing metadata rather than the internal share-link ID. Use an English fallback error that the app can localize into Russian.
 8. `Endpoints/GrokClient+Chat.swift`: disable Grok memory when the request is temporary. `Streaming/GrokStreamParser.swift` and `Models/ConversationModels.swift`: retain final response metadata so temporary chats can show sources and attachments without reloading saved history.
+9. `Endpoints/GrokClient+Workspaces.swift`: add a name-only PUT for project renaming, preserving other project fields. Native project actions also use the existing workspace deletion and conversation-assignment endpoints.
+10. `Endpoints/GrokClient+Conversations.swift`: optional `workspaceId` filter for paginated project chat lists, matching the public Grok frontend request schema.
+11. `Endpoints/GrokClient+Workspaces.swift`: remove a conversation's project membership with DELETE `/workspaces/{workspaceId}/conversations/{conversationId}`. New project conversations use the library's existing `workspaceIds` message option.
+12. `Endpoints/GrokClient+Conversations.swift`: optional `excludeProjects` query flag; general history uses it to exclude project conversations, while workspace-filtered lists keep them visible.
 
 The native app and its core adapter use the library's request builder, endpoint models, HTTP error validation, NDJSON/SSE parser, and cancellable streaming transport. The vendored library retains upstream's Swift 5 language mode; it is compiled by a Swift 6 toolchain.
 
@@ -26,6 +30,8 @@ The native app and its core adapter use the library's request builder, endpoint 
 `Configuration/Assets.xcassets/AppIcon.appiconset` and `Sources/SwiftyGrok/Resources/BrandAssets.xcassets/GrokLogo.imageset` use artwork extracted from the user-supplied Grok iOS 1.4.61 IPA. The app icon is the 1024-pixel `AppIcon` rendition; the empty-chat logo is the `GrokLogo` image in the main asset catalog. The catalog contains PNG representations adapted to the macOS canvas with transparent corners and margins. Xcode generates the packaged ICNS from these sources. This artwork belongs to xAI and is not covered by this repository's MIT license. SwiftyGrok remains an unofficial client.
 
 `Sources/SwiftyGrok/Resources/AppIconLight.icns` is the light-appearance icon supplied separately by the user as `Grok(light).icns`. It is used for the Dock, minimized-window badges, and the About panel when the selected appearance is light. The existing generated `AppIcon.icns` is used for dark and black appearances. Both variants depict Grok brand artwork owned by xAI.
+
+Workspace listing additionally preserves and submits page tokens so the native project list can load all pages. Project icon IDs and their `l:<icon>:<color>` encoding were checked against the public Grok frontend; the app uses native SF Symbols to display them.
 
 # SwiftMath
 

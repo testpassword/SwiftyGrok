@@ -8,6 +8,7 @@ public final class ChatStore {
     public private(set) var branches: [ChatBranch] = []
     public private(set) var selectedLeafID: String?
     public private(set) var selectedConversationID: String?
+    public private(set) var selectedProjectID: String?
     public private(set) var isLoadingHistory = false
     public private(set) var isLoadingMessages = false
     public private(set) var isSending = false
@@ -30,6 +31,10 @@ public final class ChatStore {
     public private(set) var recoveryText: String?
     @ObservationIgnored public var onSendStarted: (() -> Void)?
     @ObservationIgnored public var onReplyCompleted: ((ReplyCompletion) -> Void)?
+    @ObservationIgnored public var onConversationUpdated: ((ChatSummary) -> Void)?
+    @ObservationIgnored public var onConversationDeleted: ((String) -> Void)?
+    @ObservationIgnored public var onProjectConversationCreated: ((String) -> Void)?
+    private var projectConversationMetadata: [String: ChatSummary] = [:]
 
     @ObservationIgnored private let service: any GrokServing
     @ObservationIgnored private var thread: ChatThread?
@@ -56,12 +61,30 @@ public final class ChatStore {
 
     public var title: String {
         if isTemporary { return L10n.text("Private conversation") }
-        return conversations.first { $0.id == selectedConversationID }?.title ?? selectedTitle
+        return selectedConversationID.flatMap { summary(id: $0)?.title } ?? selectedTitle
+    }
+
+    public func summary(id: String) -> ChatSummary? {
+        conversations.first { $0.id == id } ?? projectConversationMetadata[id]
+    }
+
+    public func registerProjectConversations(_ chats: [ChatSummary]) {
+        for chat in chats where !temporaryConversationIDs.contains(chat.id) { projectConversationMetadata[chat.id] = chat }
+        let ids = Set(chats.map(\.id))
+        if conversations.contains(where: { ids.contains($0.id) }) {
+            historyGeneration = UUID()
+            isLoadingHistory = false
+            conversations.removeAll { ids.contains($0.id) }
+        }
     }
     public var canSend: Bool {
         !isSending && !isReadingFiles && updatingConversations.isEmpty && !isLoadingMessages && !needsReload && !requiresLogin && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftFiles.isEmpty)
     }
     public var canAttachFiles: Bool { !isSending && !isReadingFiles }
+
+    private var draftKey: String {
+        selectedConversationID ?? selectedProjectID.map { "__project:\($0)" } ?? "__new"
+    }
 
     public func importFiles(_ urls: [URL]) async {
         await importFiles(resolvingURLs: { urls })
@@ -99,6 +122,7 @@ public final class ChatStore {
         fresh.accountName = accountName
         fresh.accountImageURL = accountImageURL
         fresh.temporaryConversationIDs = temporaryConversationIDs
+        fresh.projectConversationMetadata = projectConversationMetadata
         fresh.requiresLogin = requiresLogin
         if requiresLogin { fresh.error = error }
         return fresh
@@ -111,7 +135,7 @@ public final class ChatStore {
         fileDrafts.merge(previous.fileDrafts) { _, old in old }
         uploadedFileIDs.merge(previous.uploadedFileIDs) { _, old in old }
         if !previous.isTemporary {
-            let key = previous.selectedConversationID ?? "__new"
+            let key = previous.draftKey
             drafts[key] = previous.draft
             fileDrafts[key] = previous.draftFiles
         }
@@ -183,7 +207,9 @@ public final class ChatStore {
             try await self.service.renameConversation(id: id, title: title)
         } commit: {
             if let index = self.conversations.firstIndex(where: { $0.id == id }) { self.conversations[index].title = title }
+            self.projectConversationMetadata[id]?.title = title
             if self.selectedConversationID == id { self.selectedTitle = title }
+            if let chat = self.summary(id: id) { self.onConversationUpdated?(chat) }
         }
     }
 
@@ -192,7 +218,9 @@ public final class ChatStore {
             try await self.service.pinConversation(id: id, pinned: pinned)
         } commit: {
             if let index = self.conversations.firstIndex(where: { $0.id == id }) { self.conversations[index].isPinned = pinned }
+            self.projectConversationMetadata[id]?.isPinned = pinned
             self.conversations = Self.ordered(self.conversations)
+            if let chat = self.summary(id: id) { self.onConversationUpdated?(chat) }
         }
     }
 
@@ -204,13 +232,48 @@ public final class ChatStore {
             self.drafts[id] = nil
             self.fileDrafts[id] = nil
             self.conversations.removeAll { $0.id == id }
+            self.projectConversationMetadata[id] = nil
+            self.onConversationDeleted?(id)
         }
+    }
+
+    public func moveConversation(id: String, to projectID: String, projects: ProjectStore) async -> Bool {
+        guard !isSending, !requiresLogin, !temporaryConversationIDs.contains(id),
+              !(isTemporary && id == selectedConversationID),
+              id == selectedConversationID || summary(id: id) != nil,
+              updatingConversations.insert(id).inserted else { return false }
+        let generation = sessionGeneration
+        defer { updatingConversations.remove(id) }
+        let moved = await projects.moveConversation(id: id, to: projectID)
+        guard generation == sessionGeneration else { return false }
+        if moved {
+            if let chat = summary(id: id) { projectConversationMetadata[id] = chat }
+            historyGeneration = UUID()
+            isLoadingHistory = false
+            conversations.removeAll { $0.id == id }
+        }
+        if moved, selectedConversationID == id { selectedProjectID = projectID }
+        return moved
+    }
+
+    public func removeConversation(id: String, from projectID: String, projects: ProjectStore) async -> Bool {
+        guard !isSending, !requiresLogin, !temporaryConversationIDs.contains(id),
+              !(isTemporary && id == selectedConversationID),
+              id == selectedConversationID || summary(id: id) != nil,
+              updatingConversations.insert(id).inserted else { return false }
+        let generation = sessionGeneration
+        defer { updatingConversations.remove(id) }
+        let removed = await projects.removeConversation(id: id, from: projectID)
+        guard generation == sessionGeneration else { return false }
+        if removed, selectedConversationID == id, selectedProjectID == projectID { selectedProjectID = nil }
+        if removed { await refreshHistory() }
+        return removed
     }
 
     public func shareConversation(id: String, responseID: String? = nil) async -> URL? {
         guard !isSending, !requiresLogin, responseID?.isEmpty != true,
               !temporaryConversationIDs.contains(id), !(isTemporary && id == selectedConversationID),
-              id == selectedConversationID || conversations.contains(where: { $0.id == id }),
+              id == selectedConversationID || summary(id: id) != nil,
               updatingConversations.insert(id).inserted else { return nil }
         let generation = sessionGeneration
         defer { updatingConversations.remove(id) }
@@ -239,7 +302,7 @@ public final class ChatStore {
 
     private func updateConversation(id: String, request: () async throws -> Void, commit: () -> Void) async {
         guard !isSending, !requiresLogin, !temporaryConversationIDs.contains(id), !(isTemporary && id == selectedConversationID),
-              id == selectedConversationID || conversations.contains(where: { $0.id == id }), updatingConversations.insert(id).inserted else { return }
+              id == selectedConversationID || summary(id: id) != nil, updatingConversations.insert(id).inserted else { return }
         let generation = sessionGeneration
         defer { updatingConversations.remove(id) }
         do {
@@ -264,19 +327,35 @@ public final class ChatStore {
         }.map(\.element)
     }
 
-    public func select(_ id: String?) {
-        guard !isSending, id != selectedConversationID || isTemporary,
+    public func select(_ id: String?, projectID: String? = nil) {
+        guard !isSending, id != selectedConversationID || isTemporary || projectID != selectedProjectID,
               id.map({ !temporaryConversationIDs.contains($0) }) ?? true else { return }
+        if let id, id == selectedConversationID, !isTemporary {
+            selectedProjectID = projectID
+            return
+        }
         if !isTemporary {
-            drafts[selectedConversationID ?? "__new"] = draft
-            fileDrafts[selectedConversationID ?? "__new"] = draftFiles
+            drafts[draftKey] = draft
+            fileDrafts[draftKey] = draftFiles
         }
         isTemporary = false
         selectedConversationID = id
-        selectedTitle = conversations.first(where: { $0.id == id })?.title ?? (id == nil ? L10n.text("New chat") : L10n.text("Chat"))
-        draft = drafts[id ?? "__new"] ?? ""
-        draftFiles = fileDrafts[id ?? "__new"] ?? []
+        selectedProjectID = projectID
+        selectedTitle = id.flatMap { summary(id: $0)?.title } ?? (id == nil ? L10n.text("New chat") : L10n.text("Chat"))
+        draft = drafts[draftKey] ?? ""
+        draftFiles = fileDrafts[draftKey] ?? []
         clearThread()
+    }
+
+    public func selectProject(_ id: String) {
+        guard !id.isEmpty else { return }
+        select(nil, projectID: id)
+    }
+
+    public func leaveProject(_ id: String) {
+        guard selectedProjectID == id else { return }
+        if selectedConversationID == nil { select(nil) }
+        else { selectedProjectID = nil }
     }
 
     public func newChat() {
@@ -288,21 +367,22 @@ public final class ChatStore {
             clearThread()
             return
         }
-        if selectedConversationID != nil { select(nil) }
+        if selectedConversationID != nil || selectedProjectID != nil { select(nil) }
         else { clearThread() }
     }
 
     public func setTemporary(_ enabled: Bool) {
         guard !isSending, updatingConversations.isEmpty, enabled != isTemporary else { return }
-        let wasEmpty = selectedConversationID == nil && messages.isEmpty
+        let wasEmpty = selectedConversationID == nil && selectedProjectID == nil && messages.isEmpty
         let unsent = draft
         let unsentFiles = draftFiles
         if !isTemporary {
-            drafts[selectedConversationID ?? "__new"] = draft
-            fileDrafts[selectedConversationID ?? "__new"] = draftFiles
+            drafts[draftKey] = draft
+            fileDrafts[draftKey] = draftFiles
         }
         isTemporary = enabled
         selectedConversationID = nil
+        selectedProjectID = nil
         selectedTitle = L10n.text("New chat")
         if enabled {
             draft = wasEmpty ? unsent : ""
@@ -378,12 +458,13 @@ public final class ChatStore {
         let parentID = messages.last?.id
         let mode = modeID
         let temporary = isTemporary
+        let projectID = temporary ? nil : selectedProjectID
         let generation = sessionGeneration
         let userID = UUID().uuidString
         let assistantID = UUID().uuidString
         draft = ""
         draftFiles = []
-        if !temporary { drafts[conversationID ?? "__new"] = ""; fileDrafts[conversationID ?? "__new"] = nil }
+        if !temporary { drafts[draftKey] = ""; fileDrafts[draftKey] = nil }
         error = nil
         recoveryText = nil
         isSending = true
@@ -395,7 +476,12 @@ public final class ChatStore {
         messages.append(ChatMessage(id: assistantID, parentID: userID, role: .assistant, text: "", createdAt: Date()))
         sendTask = Task { [weak self] in
             guard let self else { return }
-            defer { isSending = false; isThinking = false; isUploadingFiles = false; sendTask = nil }
+            defer {
+                isSending = false; isThinking = false; isUploadingFiles = false; sendTask = nil
+                if generation == sessionGeneration, conversationID == nil, selectedConversationID != nil, let projectID {
+                    onProjectConversationCreated?(projectID)
+                }
+            }
             var finalReceived = false
             var serverResponseID = ""
             var finalEvent: ReplyEvent?
@@ -416,7 +502,7 @@ public final class ChatStore {
                 isUploadingFiles = false
                 isThinking = true
                 replyStarted = true
-                let stream = try await service.reply(conversationID: conversationID, parentID: parentID, text: text, modeID: mode, temporary: temporary, fileIDs: fileIDs)
+                let stream = try await service.reply(conversationID: conversationID, parentID: parentID, text: text, modeID: mode, temporary: temporary, fileIDs: fileIDs, projectID: projectID)
                 for try await event in stream {
                     try Task.checkCancellation()
                     guard generation == sessionGeneration else { return }
@@ -427,8 +513,13 @@ public final class ChatStore {
                             conversations.removeAll { $0.id == event.conversationID }
                         } else {
                             selectedTitle = String((text.isEmpty ? files.first?.name ?? L10n.text("New chat") : text).prefix(70))
-                            conversations.insert(ChatSummary(id: event.conversationID, title: selectedTitle, modifiedAt: Date()), at: 0)
-                            conversations = Self.ordered(conversations)
+                            let chat = ChatSummary(id: event.conversationID, title: selectedTitle, modifiedAt: Date())
+                            if projectID != nil {
+                                projectConversationMetadata[event.conversationID] = chat
+                            } else {
+                                conversations.insert(chat, at: 0)
+                                conversations = Self.ordered(conversations)
+                            }
                         }
                     }
                     if !event.responseID.isEmpty { serverResponseID = event.responseID }
@@ -495,6 +586,7 @@ public final class ChatStore {
         sendTask?.cancel()
         loadGeneration = UUID()
         historyGeneration = UUID()
+        projectConversationMetadata = [:]
         draftFiles = []
         fileDrafts = [:]
         uploadedFileIDs = [:]
