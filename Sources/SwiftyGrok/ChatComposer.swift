@@ -19,6 +19,7 @@ import GrokCore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if store.isDictating { DictationStatus(store: store) }
             if !store.draftFiles.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -89,6 +90,13 @@ import GrokCore
         .fileImporter(isPresented: $showFilePicker, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             importFiles(result)
         }
+        .onDisappear { VoiceDictation.shared.cancel(in: store) }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
+            let window = notification.object as? NSWindow
+            if window?.identifier?.rawValue == (floating ? "quick-input" : "main") {
+                VoiceDictation.shared.cancel(in: store)
+            }
+        }
     }
 
     private func composerActions(compact: Bool) -> some View {
@@ -106,6 +114,7 @@ import GrokCore
                         .help(L10n.text("A new private conversation that is not saved in your history"))
                 }
                 Spacer(minLength: 8)
+                DictationButton(store: store)
                 if store.isSending {
                     Button { followResponse.toggle() } label: {
                         Image(systemName: followResponse ? "arrow.down.to.line.circle.fill" : "arrow.down.to.line.circle")

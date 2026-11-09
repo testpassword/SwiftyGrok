@@ -14,6 +14,8 @@ import GrokCore
     @ObservationIgnored private var action: (() -> Void)?
     @ObservationIgnored private var tap: CFMachPort?
     @ObservationIgnored private var source: CFRunLoopSource?
+    @ObservationIgnored private var localMonitor: Any?
+    @ObservationIgnored private var listeningGeneration = UUID()
     @ObservationIgnored private var chord = DualCommandChord()
     @ObservationIgnored private var observing = false
     @ObservationIgnored private var requestedAccess = false
@@ -26,6 +28,10 @@ import GrokCore
                                                   name: BehaviorSettings.windowScreenshotEnabledDidChange, object: BehaviorSettings.shared)
             NotificationCenter.default.addObserver(self, selector: #selector(applicationActivated),
                                                   name: NSApplication.didBecomeActiveNotification, object: nil)
+            for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification] {
+                NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(applicationActivated),
+                                                                  name: name, object: nil)
+            }
         }
         let request = !requestedAccess
         requestedAccess = true
@@ -44,12 +50,38 @@ import GrokCore
     @objc private func applicationActivated() { refresh() }
 
     private func refresh(requestPermission: Bool = false) {
-        stopListening()
         needsInputMonitoring = false
         errorMessage = nil
-        guard action != nil, BehaviorSettings.shared.windowScreenshotEnabled else { return }
+        guard action != nil, BehaviorSettings.shared.windowScreenshotEnabled else { stopListening(); return }
+        // App-local modifier events do not require Input Monitoring. Keep this
+        // path available even if macOS revokes the global permission on update.
+        if localMonitor == nil {
+            resetChord()
+            localMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+                // A session tap already receives this app's events. Processing
+                // the delayed AppKit copy too could fire the same chord twice.
+                if let self, !self.isGlobalListenerActive {
+                    let flags = event.cgEvent?.flags ?? CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))
+                    self.handleFlags(flags)
+                }
+                return event
+            }
+        }
         let allowed = CGPreflightListenEventAccess() || (requestPermission && CGRequestListenEventAccess())
-        guard allowed else { needsInputMonitoring = true; return }
+        guard allowed else { stopGlobalListening(); needsInputMonitoring = true; return }
+        // Do not replace a healthy tap (or reset a half-pressed chord) whenever
+        // the app becomes active or its main window is reopened.
+        if let tap, let source, CFMachPortIsValid(tap), CFRunLoopSourceIsValid(source) {
+            if !CGEvent.tapIsEnabled(tap: tap) {
+                resetChord()
+                CGEvent.tapEnable(tap: tap, enable: true)
+                if !CGEvent.tapIsEnabled(tap: tap) {
+                    errorMessage = L10n.text("Could not enable the screenshot shortcut. Try turning it off and on again.")
+                }
+            }
+            return
+        }
+        stopGlobalListening()
         resetChord()
         let mask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
@@ -70,6 +102,11 @@ import GrokCore
         CGEvent.tapEnable(tap: tap, enable: true)
     }
 
+    private var isGlobalListenerActive: Bool {
+        guard let tap, let source else { return false }
+        return CFMachPortIsValid(tap) && CFRunLoopSourceIsValid(source) && CGEvent.tapIsEnabled(tap: tap)
+    }
+
     private func handle(_ type: CGEventType, flags: CGEventFlags) {
         guard BehaviorSettings.shared.windowScreenshotEnabled else { return }
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -77,11 +114,24 @@ import GrokCore
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return
         }
+        guard type == .flagsChanged else { return }
+        handleFlags(flags)
+    }
+
+    private func handleFlags(_ flags: CGEventFlags) {
+        guard BehaviorSettings.shared.windowScreenshotEnabled else { return }
         let other: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskSecondaryFn]
         if chord.update(leftPressed: flags.rawValue & UInt64(NX_DEVICELCMDKEYMASK) != 0,
                         rightPressed: flags.rawValue & UInt64(NX_DEVICERCMDKEYMASK) != 0,
                         otherModifiers: !flags.intersection(other).isEmpty) {
-            action?()
+            let generation = listeningGeneration
+            // Window lookup and screenshot preparation can call Window Server.
+            // Return from the event tap first so macOS does not time it out.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.listeningGeneration == generation,
+                      BehaviorSettings.shared.windowScreenshotEnabled else { return }
+                self.action?()
+            }
         }
     }
 
@@ -91,17 +141,25 @@ import GrokCore
                                  rightPressed: flags & UInt64(NX_DEVICERCMDKEYMASK) != 0)
     }
 
-    private func stopListening() {
+    private func stopGlobalListening() {
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         source = nil
         tap = nil
+    }
+
+    private func stopListening() {
+        listeningGeneration = UUID()
+        if let localMonitor { NSEvent.removeMonitor(localMonitor) }
+        localMonitor = nil
+        stopGlobalListening()
         chord = DualCommandChord()
     }
 
     func stop() {
         stopListening()
         NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         observing = false
         action = nil
     }
@@ -158,8 +216,12 @@ import GrokCore
     }
 }
 
-enum WindowScreenshotError: LocalizedError {
+enum WindowScreenshotError: LocalizedError, SystemPermissionError {
     case noWindow, screenPermission, encoding, draftBusy
+    var systemPermission: SystemPermission? {
+        if case .screenPermission = self { return .screenRecording }
+        return nil
+    }
     var errorDescription: String? {
         switch self {
         case .noWindow: return L10n.text("The active window is not available for a screenshot.")

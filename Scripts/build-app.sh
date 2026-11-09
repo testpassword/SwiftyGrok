@@ -23,6 +23,9 @@ echo "Running tests..."
 swift test --arch arm64 --scratch-path "$build_dir/swiftpm"
 
 echo "Building the Apple Silicon (arm64) Release app..."
+# Remove the retired Finder Sync plug-in from an older cached product before
+# Xcode embeds and signs the replacement Share Extension.
+rm -rf "$build_dir/xcode/Build/Products/Release/SwiftyGrok.app/Contents/PlugIns/SwiftyGrokFinder.appex"
 xcodebuild -project SwiftyGrok.xcodeproj -scheme SwiftyGrok -configuration Release \
     -destination 'generic/platform=macOS' -derivedDataPath "$build_dir/xcode" \
     ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual build
@@ -33,20 +36,24 @@ echo "Packaging and verifying the app..."
 mkdir -p "$build_dir/package"
 rm -rf "$staged_app"
 ditto "$build_dir/xcode/Build/Products/Release/SwiftyGrok.app" "$staged_app"
-finder_extension="$staged_app/Contents/PlugIns/SwiftyGrokFinder.appex"
+share_extension="$staged_app/Contents/PlugIns/SwiftyGrokShare.appex"
 widget_extension="$staged_app/Contents/PlugIns/SwiftyGrokWidgets.appex"
-for extension in "$finder_extension" "$widget_extension"; do
+for extension in "$share_extension" "$widget_extension"; do
     if [[ ! -d "$extension" ]]; then
         echo "An extension is missing from the app bundle: ${extension##*/}" >&2
         exit 1
     fi
 done
+if [[ -e "$staged_app/Contents/PlugIns/SwiftyGrokFinder.appex" ]]; then
+    echo "The retired Finder Sync extension is still present." >&2
+    exit 1
+fi
 
 # Release targets are stripped by Xcode before signing. Require arm64-only
 # executables and reject source/object debug records and local build paths.
 echo "Checking arm64 architecture and executable privacy..."
 for binary in "$staged_app/Contents/MacOS/SwiftyGrok" \
-    "$finder_extension/Contents/MacOS/SwiftyGrokFinder" \
+    "$share_extension/Contents/MacOS/SwiftyGrokShare" \
     "$widget_extension/Contents/MacOS/SwiftyGrokWidgets"; do
     architectures=$(xcrun lipo -archs "$binary")
     if [[ "$architectures" != arm64 ]]; then
@@ -67,7 +74,7 @@ for binary in "$staged_app/Contents/MacOS/SwiftyGrok" \
         exit 1
     fi
 done
-codesign --verify --strict "$finder_extension"
+codesign --verify --strict "$share_extension"
 codesign --verify --strict "$widget_extension"
 codesign --verify --deep --strict "$staged_app"
 rm -rf "$app_path"

@@ -1,13 +1,36 @@
 import Foundation
 import GrokClient
 
+public enum SystemPermission: Equatable, Sendable {
+    case camera, microphone, screenRecording
+
+    public var settingsURL: URL {
+        let pane: String
+        switch self {
+        case .camera: pane = "Privacy_Camera"
+        case .microphone: pane = "Privacy_Microphone"
+        case .screenRecording: pane = "Privacy_ScreenCapture"
+        }
+        return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")!
+    }
+}
+
+/// Local capture errors identify their permission without inspecting message text.
+public protocol SystemPermissionError: Error {
+    var systemPermission: SystemPermission? { get }
+}
+
 public struct DisplayError: Identifiable, Equatable, Sendable {
     public let id = UUID()
     public let message: String
     public let needsLogin: Bool
+    public let allowsSessionRefresh: Bool
+    public let systemPermission: SystemPermission?
 
     public init(_ error: Error) {
         needsLogin = (error as? GrokError) == .unauthorized || (error as? GrokError) == .invalidCredentials
+        allowsSessionRefresh = error is GrokError
+        systemPermission = (error as? any SystemPermissionError)?.systemPermission
         switch error {
         case GrokError.unauthorized, GrokError.invalidCredentials:
             message = L10n.text("Your Grok session has expired. Sign in again to load your history and send messages.")

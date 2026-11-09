@@ -15,7 +15,10 @@ public protocol GrokServing: AnyObject {
     func pinConversation(id: String, pinned: Bool) async throws
     func deleteConversation(id: String) async throws
     func shareConversation(id: String, responseID: String) async throws -> URL
+    func publicChat(_ link: PublicChatLink) async throws -> PublicChat
+    func continuePublicChat(_ link: PublicChatLink) async throws -> ChatSummary
     func upload(file: DraftFile) async throws -> String
+    func transcribe(audio: Data) async throws -> String
     func reply(conversationID: String?, parentID: String?, text: String, modeID: String, temporary: Bool, fileIDs: [String], projectID: String?) async throws -> AsyncThrowingStream<ReplyEvent, Error>
 }
 
@@ -138,6 +141,46 @@ public final class GrokService: GrokServing, ProjectServing {
 
     public func shareConversation(id: String, responseID: String) async throws -> URL {
         try await client.publicConversationURL(conversationId: id, responseId: responseID)
+    }
+
+    public func publicChat(_ link: PublicChatLink) async throws -> PublicChat {
+        let snapshot = try await client.sharedConversation(shareLinkId: link.id)
+        guard snapshot.isPublic == true, let responses = snapshot.responses else { throw GrokError.notFound }
+        let visible = responses.filter { $0.sender.lowercased() != "system" }
+        let ids = Set(visible.map(\.responseId))
+        var messages: [ChatMessage] = []
+        for response in visible {
+            try Task.checkCancellation()
+            let sender = response.sender.lowercased()
+            let role: ChatMessage.Role = ["human", "user"].contains(sender) ? .user :
+                (["assistant", "model", "grok"].contains(sender) ? .assistant : .other)
+            let content = GrokMessageContent(response.richContent)
+            // Public snapshots omit the system root or the unshared prefix.
+            // Never fetch missing private nodes from the original conversation.
+            let parent = response.parentResponseId.flatMap { ids.contains($0) ? $0 : nil }
+            messages.append(ChatMessage(id: response.responseId, parentID: parent, role: role, text: response.message,
+                createdAt: GrokDate.parse(response.createTime), sources: content.sources,
+                attachments: try await resolveAttachments(content.attachments), reasoning: content.reasoning,
+                reasoningDuration: content.reasoningDuration, failure: content.failure))
+        }
+        let thread = try ChatThread(responses: messages)
+        var reached = Set<String>()
+        for branch in thread.branches { reached.formUnion(try thread.path(to: branch.id).map(\.id)) }
+        guard reached.count == messages.count else { throw ClientFailure.invalidThread }
+        guard !messages.isEmpty else { throw ClientFailure.emptyConversation }
+        return PublicChat(summary: ChatSummary(id: snapshot.conversation.conversationId,
+            title: snapshot.conversation.title), thread: thread)
+    }
+
+    public func continuePublicChat(_ link: PublicChatLink) async throws -> ChatSummary {
+        let owned = try await client.cloneSharedConversation(shareLinkId: link.id)
+        guard !owned.conversationId.isEmpty, !owned.temporary else { throw ClientFailure.invalidThread }
+        return ChatSummary(id: owned.conversationId, title: owned.title,
+                           modifiedAt: GrokDate.parse(owned.modifyTime) ?? Date(), isPinned: owned.starred)
+    }
+
+    public func transcribe(audio: Data) async throws -> String {
+        try await client.speechToText(audioData: audio, audioFormat: "m4a").text
     }
 
     public func thread(id: String) async throws -> ChatThread {

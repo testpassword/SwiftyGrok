@@ -5,6 +5,24 @@ import FoundationNetworking
 
 // MARK: - GrokClient Conversations
 extension GrokClient {
+    public struct SharedConversation: Decodable {
+        public let conversation: Conversation
+        public let responses: [Response]?
+        public let isPublic: Bool?
+    }
+
+    public func sharedConversation(shareLinkId: String) async throws -> SharedConversation {
+        try await decodeJSON(path: endpointPath(["share_links_data", shareLinkId], queryItems: []), method: "GET")
+    }
+
+    /// Creates a conversation owned by the signed-in account. Never call this
+    /// just to preview a link or automatically retry a successful creation.
+    public func cloneSharedConversation(shareLinkId: String) async throws -> Conversation {
+        let result: SharedConversation = try await decodeJSON(
+            path: endpointPath(["share_links", shareLinkId, "clone"], queryItems: []), payload: [:])
+        return result.conversation
+    }
+
     /// Resolve legacy attachment IDs to their asset path and media metadata.
     public func assetMetadata(id: String) async throws -> [String: AnyCodable] {
         let path = try endpointPath(["assets", id], queryItems: [])
@@ -84,7 +102,8 @@ extension GrokClient {
     }
 
     /// Publish the selected response path while preserving existing team access.
-    /// Resolve the public ID from sharing metadata; shareLinkId is an internal ID.
+    /// The creation response's shareLinkId is the public route token used by the
+    /// web client. Existing sharing metadata exposes that route as publicId.
     public func publicConversationURL(conversationId: String, responseId: String) async throws -> URL {
         let sharingPath = try endpointPath(["conversations", conversationId, "sharing"],
                                           queryItems: [URLQueryItem(name: "responseId", value: responseId)])
@@ -92,13 +111,16 @@ extension GrokClient {
             let json = try await sendJSON(path: sharingPath, method: "GET") as? [String: Any]
             return json?["sharing"] as? [String: Any] ?? [:]
         }
-        func publicURL(_ object: [String: Any]) -> URL? {
-            guard object["scope"] as? String == "SHARING_SCOPE_PUBLIC",
-                  let id = object["publicId"] as? String, !id.isEmpty else { return nil }
+        func routeURL(for id: String?) -> URL? {
+            guard let id = id?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty else { return nil }
             var allowed = CharacterSet.urlPathAllowed
             allowed.remove(charactersIn: "/?#%")
             guard let encoded = id.addingPercentEncoding(withAllowedCharacters: allowed) else { return nil }
             return URL(string: "https://grok.com/share/\(encoded)")
+        }
+        func publicURL(_ object: [String: Any]) -> URL? {
+            guard object["scope"] as? String == "SHARING_SCOPE_PUBLIC" else { return nil }
+            return routeURL(for: object["publicId"] as? String)
         }
         let current = try await sharing()
         if let url = publicURL(current) { return url }
@@ -110,7 +132,9 @@ extension GrokClient {
             "shareWithTeamMembers": current["sharedWithOwnTeam"] as? Bool ?? false,
             "shareWithOrg": current["scope"] as? String == "SHARING_SCOPE_ORGANIZATION"
         ]
-        try await sendVoid(path: path, payload: payload)
+        let published = try await sendJSON(path: path, payload: payload) as? [String: Any]
+        try Task.checkCancellation()
+        if let url = routeURL(for: published?["shareLinkId"] as? String) { return url }
         // Sharing metadata can lag behind the successful POST. Retry reads only;
         // repeating the publication request could create another public link.
         for attempt in 0..<3 {

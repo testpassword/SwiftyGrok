@@ -18,14 +18,35 @@ final class AppModel {
     @ObservationIgnored private(set) var media: MessageMediaLoader?
     @ObservationIgnored private var didRestore = false
     @ObservationIgnored private var generation = UUID()
-    @ObservationIgnored private let finderAttachments = FinderAttachmentInbox()
-    @ObservationIgnored private var finderImportTask: Task<Void, Never>?
+    @ObservationIgnored private let attachmentInbox = AttachmentInbox()
+    @ObservationIgnored private var attachmentImportTask: Task<Void, Never>?
     @ObservationIgnored private var screenshotTask: Task<Void, Never>?
     @ObservationIgnored private var pendingNotificationConversationID: String?
+    @ObservationIgnored private var pendingPublicChatLink: PublicChatLink?
     @ObservationIgnored private let replyNotifications = ReplyNotifications.shared
 
     var canOpenNotificationConversation: Bool {
-        canImportFinderFiles && store?.updatingConversations.isEmpty == true
+        canOpenPublicChat
+    }
+
+    var canOpenPublicChat: Bool {
+        !isRestoring && !isConnecting && !showLogin && store?.requiresLogin == false &&
+        store?.isSending == false && store?.isReadingFiles == false && store?.isDictating == false &&
+        store?.isContinuingPublicChat == false && store?.updatingConversations.isEmpty == true
+    }
+
+    func receivePublicChat(_ link: PublicChatLink) {
+        pendingPublicChatLink = link
+        quickInput.hide()
+        quickInput.openMain()
+        if store?.requiresLogin == true { showLogin = true }
+        openPendingPublicChat()
+    }
+
+    func openPendingPublicChat() {
+        guard canOpenPublicChat, let link = pendingPublicChatLink, let store else { return }
+        pendingPublicChatLink = nil
+        store.selectPublicChat(link)
     }
 
     func openReplyNotification(_ conversationID: String?) {
@@ -53,26 +74,43 @@ final class AppModel {
         }
     }
 
-    var canImportFinderFiles: Bool {
+    var canImportAttachments: Bool {
         !isRestoring && !isConnecting && !showLogin && store?.requiresLogin == false && store?.canAttachFiles == true
     }
 
-    func receiveFinderFiles(_ urls: [URL]) {
-        finderAttachments.enqueue(urls)
-        guard !finderAttachments.isEmpty else { return }
+    func receiveFiles(_ urls: [URL]) {
+        attachmentInbox.enqueue(urls)
+        guard !attachmentInbox.isEmpty else { return }
         quickInput.hide()
         quickInput.openMain()
         if store?.requiresLogin == true { showLogin = true }
-        importPendingFinderFiles()
+        if store?.publicChatLink != nil { store?.newChat() }
+        importPendingAttachments()
     }
 
-    func importPendingFinderFiles() {
-        guard canImportFinderFiles, finderImportTask == nil, !finderAttachments.isEmpty, let store else { return }
-        finderImportTask = Task { [weak self, finderAttachments] in
-            await finderAttachments.deliver(to: store)
+    func receiveSharedFiles(_ files: [SharedFile]) {
+        guard !files.isEmpty else { return }
+        let drafts = files.map { DraftFile(name: $0.name, mimeType: $0.mimeType, data: $0.data) }
+        guard attachmentInbox.enqueue(files: drafts) else {
+            let error = DisplayError(ClientFailure.filesTooLarge)
+            if let store { store.error = error } else { loginError = error.message }
+            quickInput.openMain()
+            return
+        }
+        quickInput.hide()
+        quickInput.openMain()
+        if store?.requiresLogin == true { showLogin = true }
+        if store?.publicChatLink != nil { store?.newChat() }
+        importPendingAttachments()
+    }
+
+    func importPendingAttachments() {
+        guard canImportAttachments, attachmentImportTask == nil, !attachmentInbox.isEmpty, let store else { return }
+        attachmentImportTask = Task { [weak self, attachmentInbox] in
+            await attachmentInbox.deliver(to: store)
             guard let self else { return }
-            finderImportTask = nil
-            importPendingFinderFiles()
+            attachmentImportTask = nil
+            importPendingAttachments()
         }
     }
 
@@ -178,10 +216,11 @@ final class AppModel {
         do {
             try keychain.delete()
             UsageMonitor.shared.setChatService(nil)
-            finderAttachments.removeAll()
+            attachmentInbox.removeAll()
             replyNotifications.reset()
             pendingNotificationConversationID = nil
             generation = UUID()
+            pendingPublicChatLink = nil
             stopConversations()
             store = nil
             media = nil

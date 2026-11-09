@@ -28,6 +28,7 @@
 "Could not access Keychain: %@" = "Could not access Keychain: %@";
 "Could not confirm the file upload. Please try again." = "Could not confirm the file upload. Please try again.";
 "Could not create a link." = "Could not create a link.";
+"Could not copy the link. Please try again." = "Could not copy the link. Please try again.";
 "Could not enable quick input (%@)." = "Could not enable quick input (%@).";
 "Could not open preview: %@" = "Could not open preview: %@";
 "Could not read Grok streaming response" = "Could not read Grok streaming response";
@@ -59,6 +60,8 @@
 "Mode" = "Mode";
 "Network error: %@" = "Network error: %@";
 "New chat" = "New chat";
+"New private chat" = "New private chat";
+"Chats" = "Chats";
 "New chat · ⌘N" = "New chat · ⌘N";
 "New private conversation" = "New private conversation";
 "No messages in this chat yet" = "No messages in this chat yet";
@@ -69,6 +72,9 @@
 "On" = "On";
 "On grok.com, open DevTools → Network, select a request to /rest/app-chat/conversations, and copy the Cookie header value. You can also import swift-grok JSON or exported cookies for grok.com." = "On grok.com, open DevTools → Network, select a request to /rest/app-chat/conversations, and copy the Cookie header value. You can also import swift-grok JSON or exported cookies for grok.com.";
 "Open" = "Open";
+"Open System Settings" = "Open System Settings";
+"If access was already granted, remove SwiftyGrok from this permission list, add the app again, and enable access." = "If access was already granted, remove SwiftyGrok from this permission list, add the app again, and enable access.";
+"Learn more" = "Learn more";
 "Open JSON…" = "Open JSON…";
 "Open in Grok" = "Open in Grok";
 "Open in browser" = "Open in browser";
@@ -148,8 +154,8 @@
 "Transparency" = "Transparency";
 "Opaque" = "Opaque";
 "Transparent" = "Transparent";
-"Configure Finder extension…" = "Configure Finder extension…";
-"Enable SwiftyGrok in macOS to attach files from Finder's context menu to the open chat or a new draft." = "Enable SwiftyGrok in macOS to attach files from Finder's context menu to the open chat or a new draft.";
+"Configure sharing extension…" = "Configure sharing extension…";
+"Enable Open in SwiftyGrok in macOS sharing extensions, then use the system Share menu to open public Grok chats or attach files to your open chat or a new draft." = "Enable Open in SwiftyGrok in macOS sharing extensions, then use the system Share menu to open public Grok chats or attach files to your open chat or a new draft.";
 "About SwiftyGrok" = "About SwiftyGrok";
 "A native, unofficial Grok client for macOS: chats, files, and quick input." = "A native, unofficial Grok client for macOS: chats, files, and quick input.";
 "GitHub Repository" = "GitHub Repository";
@@ -223,3 +229,17 @@
 "Allow screen recording for SwiftyGrok in System Settings → Privacy & Security → Screen Recording." = "Allow screen recording for SwiftyGrok in System Settings → Privacy & Security → Screen Recording.";
 "Could not create the screenshot." = "Could not create the screenshot.";
 "Wait for the current reply or file import before attaching a screenshot." = "Wait for the current reply or file import before attaching a screenshot.";
+"Dictate a message" = "Dictate a message";
+"Finish dictation" = "Finish dictation";
+"Cancel dictation" = "Cancel dictation";
+"Recording…" = "Recording…";
+"Transcribing with Grok…" = "Transcribing with Grok…";
+"Accessing microphone…" = "Accessing microphone…";
+"Allow microphone access for SwiftyGrok in System Settings → Privacy & Security → Microphone." = "Allow microphone access for SwiftyGrok in System Settings → Privacy & Security → Microphone.";
+"No microphone is available." = "No microphone is available.";
+"Could not record audio. Check your microphone and try again." = "Could not record audio. Check your microphone and try again.";
+"No speech was recognized. Please try again." = "No speech was recognized. Please try again.";
+"Public chat" = "Public chat";
+"Continue chat" = "Continue chat";
+"Create a copy in your chat history" = "Create a copy in your chat history";
+"Could not load this public chat." = "Could not load this public chat.";

@@ -30,11 +30,11 @@ Press **⌥Space** from another app to bring up the floating chat bar. Write a q
 
 ![Floating chat bar with attachment, response mode, and private chat controls](Previews/floating-bar-example.jpeg)
 
-### Files straight from Finder
+### Files from the Share menu
 
-Right-click a file in Finder and choose **Add to SwiftyGrok**. It will be attached to your open chat, or to a new chat if none is selected, ready for your next message.
+Choose **Share → Open in SwiftyGrok** in Finder or another app. Files and photos will be attached to your open chat, or to a new chat if none is selected, ready for your next message. Share a public grok.com chat link through the same menu to read it in SwiftyGrok. Choose **Continue chat** to create your own copy and keep the conversation going.
 
-![Add to SwiftyGrok in Finder's context menu](Previews/finder-extension-example.jpeg)
+![Open in SwiftyGrok in the macOS Share menu](Previews/share-extension-example.jpeg)
 
 ## Build and run
 

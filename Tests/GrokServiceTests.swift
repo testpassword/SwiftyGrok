@@ -37,6 +37,72 @@ private final class FixtureProtocol: URLProtocol {
 }
 
 final class GrokServiceTests: XCTestCase {
+    @MainActor func testPublicSnapshotUsesShareEndpointAndNeverFetchesOriginalPrivateNodes() async throws {
+        var calls = 0
+        FixtureProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/rest/app-chat/share_links_data/public-fixture")
+            return (200, Data(#"{"isPublic":true,"conversation":{"conversationId":"original","title":"Public title"},"responses":[{"responseId":"human","sender":"human","message":"Question","parentResponseId":"omitted-private-root"},{"responseId":"assistant","sender":"ASSISTANT","message":"Answer with `code`","parentResponseId":"human","generatedImageUrls":["https://assets.grok.com/image.png"]}]}"#.utf8))
+        }
+        let link = PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!
+        let preview = try await service().publicChat(link)
+        XCTAssertEqual(preview.summary.id, "original")
+        XCTAssertEqual(preview.summary.title, "Public title")
+        let path = try preview.thread.path()
+        XCTAssertEqual(path.map(\.role), [.user, .assistant])
+        XCTAssertNil(path.first?.parentID)
+        XCTAssertEqual(path.last?.parentID, "human")
+        XCTAssertEqual(path.last?.attachments.first?.url?.absoluteString, "https://assets.grok.com/image.png")
+        XCTAssertEqual(calls, 1)
+    }
+
+    @MainActor func testNonPublicOrMalformedShareCannotBePreviewed() async throws {
+        let link = PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!
+        for payload in [
+            #"{"isPublic":false,"conversation":{"conversationId":"private","title":"Private"},"responses":[]}"#,
+            #"{"isPublic":true,"conversation":{"conversationId":"original","title":"Invalid"},"responses":[{"responseId":"a","sender":"human","message":"Q","parentResponseId":"b"},{"responseId":"b","sender":"assistant","message":"A","parentResponseId":"a"}]}"#,
+            #"{"isPublic":true,"conversation":{"conversationId":"original","title":"Invalid"},"responses":[{"responseId":"root","sender":"human","message":"Visible"},{"responseId":"a","sender":"human","message":"Q","parentResponseId":"b"},{"responseId":"b","sender":"assistant","message":"A","parentResponseId":"a"}]}"#
+        ] {
+            FixtureProtocol.handler = { _ in (200, Data(payload.utf8)) }
+            do { _ = try await service().publicChat(link); XCTFail("Invalid snapshot accepted") } catch {}
+        }
+    }
+
+    @MainActor func testContinuePublicChatUsesOneClonePostAndReturnsOwnedConversation() async throws {
+        var calls = 0
+        FixtureProtocol.handler = { request in
+            calls += 1
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/rest/app-chat/share_links/public-fixture/clone")
+            XCTAssertTrue(request.value(forHTTPHeaderField: "Cookie")?.contains("sso=fixture") == true)
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            XCTAssertTrue(body.isEmpty)
+            return (200, Data(#"{"conversation":{"conversationId":"owned-copy","title":"My copy"},"responses":[]}"#.utf8))
+        }
+        let link = PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!
+        let copy = try await service().continuePublicChat(link)
+        XCTAssertEqual(copy.id, "owned-copy")
+        XCTAssertEqual(copy.title, "My copy")
+        XCTAssertEqual(calls, 1)
+    }
+
+    @MainActor func testDictationUsesGrokSessionAndSpeechEndpoint() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "grok.com")
+            XCTAssertEqual(request.url?.path, "/rest/voice/speech-to-text")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertTrue(request.value(forHTTPHeaderField: "Cookie")?.contains("sso=fixture") == true)
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            XCTAssertEqual(body["audioBase64"], Data([1, 2, 3]).base64EncodedString())
+            XCTAssertEqual(body["audioFormat"], "m4a")
+            XCTAssertEqual(body["refinementLevel"], "REFINEMENT_LEVEL_POLISH")
+            return (200, Data(#"{"text":"Распознанный текст"}"#.utf8))
+        }
+        let text = try await service().transcribe(audio: Data([1, 2, 3]))
+        XCTAssertEqual(text, "Распознанный текст")
+    }
+
     @MainActor func testModeCatalogKeepsDescriptionsIconsBadgesAndUnavailableModes() async throws {
         FixtureProtocol.handler = { request in
             XCTAssertEqual(request.url?.path, "/rest/modes")
@@ -288,7 +354,7 @@ final class GrokServiceTests: XCTestCase {
         } catch { XCTAssertEqual(error as? ClientFailure, .interruptedReply) }
     }
 
-    @MainActor func testSharePublishesSelectedPathAndUsesPublicID() async throws {
+    @MainActor func testSharePublishesSelectedPathAndUsesCreationResponseTokenWithoutPollingMetadata() async throws {
         var reads = 0
         FixtureProtocol.handler = { request in
             if request.httpMethod == "GET" {
@@ -307,11 +373,20 @@ final class GrokServiceTests: XCTestCase {
             XCTAssertEqual(body["teamMembersToShare"] as? [String], ["member"])
             XCTAssertEqual(body["targetTeamIds"] as? [String], ["team"])
             XCTAssertEqual(body["shareWithTeamMembers"] as? Bool, true)
-            return (200, Data(#"{"shareLinkId":"internal-id"}"#.utf8))
+            return (200, Data(#"{"shareLinkId":"created-public-token"}"#.utf8))
         }
         let url = try await service().shareConversation(id: "chat", responseID: "leaf")
-        XCTAssertEqual(url.absoluteString, "https://grok.com/share/public-id")
-        XCTAssertEqual(reads, 2)
+        XCTAssertEqual(url.absoluteString, "https://grok.com/share/created-public-token")
+        XCTAssertEqual(reads, 1)
+    }
+
+    @MainActor func testShareEscapesTheCreationTokenAsOnePathSegment() async throws {
+        FixtureProtocol.handler = { request in
+            if request.httpMethod == "GET" { return (200, Data(#"{"sharing":{"scope":"SHARING_SCOPE_NONE"}}"#.utf8)) }
+            return (200, Data(#"{"shareLinkId":"  public/token?#%  "}"#.utf8))
+        }
+        let url = try await service().shareConversation(id: "chat", responseID: "leaf")
+        XCTAssertEqual(url.absoluteString, "https://grok.com/share/public%2Ftoken%3F%23%25")
     }
 
     @MainActor func testShareReusesExistingPublicLinkWithoutPosting() async throws {
@@ -328,7 +403,7 @@ final class GrokServiceTests: XCTestCase {
         FixtureProtocol.handler = { request in
             if request.httpMethod == "POST" {
                 publications += 1
-                return (200, Data(#"{"shareLinkId":"internal"}"#.utf8))
+                return (200, Data("{}".utf8))
             }
             reads += 1
             return (200, Data((reads < 3 ? #"{"sharing":{"scope":"SHARING_SCOPE_PRIVATE"}}"# : #"{"sharing":{"scope":"SHARING_SCOPE_PUBLIC","publicId":"ready"}}"#).utf8))
@@ -339,8 +414,11 @@ final class GrokServiceTests: XCTestCase {
         XCTAssertEqual(reads, 3)
     }
 
-    @MainActor func testShareCannotGuessURLFromInternalShareLinkID() async throws {
-        FixtureProtocol.handler = { _ in (200, Data(#"{"shareLinkId":"internal-only"}"#.utf8)) }
+    @MainActor func testShareCannotGuessURLFromNonPublicMetadataWhenCreationReturnsNoToken() async throws {
+        FixtureProtocol.handler = { request in
+            if request.httpMethod == "POST" { return (200, Data("{}".utf8)) }
+            return (200, Data(#"{"sharing":{"scope":"SHARING_SCOPE_TEAM","shareLinkId":"metadata-internal-only"}}"#.utf8))
+        }
         do {
             _ = try await service().shareConversation(id: "chat", responseID: "leaf")
             XCTFail("Missing public ID must be reported instead of producing a broken link")

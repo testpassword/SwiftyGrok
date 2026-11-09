@@ -1,1 +1,2 @@
 "NSCameraUsageDescription" = "Take a photo to attach to your Grok message.";
+"NSMicrophoneUsageDescription" = "Record your voice and send it to Grok to turn it into message text.";

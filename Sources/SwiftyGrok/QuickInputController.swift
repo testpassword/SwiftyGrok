@@ -96,7 +96,10 @@ import GrokCore
         panel.makeKeyAndOrderFront(nil)
     }
 
-    func hide() { panel?.orderOut(nil) }
+    func hide() {
+        if let draftStore { VoiceDictation.shared.cancel(in: draftStore) }
+        panel?.orderOut(nil)
+    }
 
     var attachmentStore: ChatStore? { panel?.isVisible == true ? draftStore : nil }
 

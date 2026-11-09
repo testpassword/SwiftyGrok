@@ -104,7 +104,11 @@ import GrokCore
         @objc private func pinChat() { configuration?.pin() }
         @objc private func renameChat() { configuration?.rename() }
         @objc private func openChatInBrowser() { configuration?.openInBrowser() }
-        @objc private func shareChat() { configuration?.share() }
+        @objc private func shareChat() {
+            let share = configuration?.share
+            // Finish closing the native context menu before showing a popover.
+            DispatchQueue.main.async { share?() }
+        }
         @objc private func removeChatFromProject() {
             guard configuration?.moveEnabled == true else { return }
             configuration?.removeFromProject?()

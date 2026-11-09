@@ -194,8 +194,13 @@ private struct TemporaryPhoto: Transferable {
     }
 }
 
-private enum AttachmentPickerError: LocalizedError {
+private enum AttachmentPickerError: LocalizedError, SystemPermissionError {
     case photoUnavailable, cameraDenied, noCamera, cameraBusy
+
+    var systemPermission: SystemPermission? {
+        if case .cameraDenied = self { return .camera }
+        return nil
+    }
 
     var errorDescription: String? {
         switch self {

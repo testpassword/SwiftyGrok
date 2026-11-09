@@ -31,7 +31,15 @@ struct SwiftyGrokApp: App {
             CommandGroup(replacing: .newItem) {
                 Button(L10n.text("New chat")) { app.store?.newChat(); app.quickInput.openMain() }
                     .keyboardShortcut("n", modifiers: .command)
-                    .disabled(app.store == nil || app.store?.isSending == true)
+                    .disabled(app.store == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true)
+                Button(L10n.text("New private chat")) {
+                    guard let store = app.store else { return }
+                    store.newPrivateChat()
+                    app.quickInput.hide()
+                    app.quickInput.openMain()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .disabled(app.store == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true || app.store?.updatingConversations.isEmpty == false || app.showLogin)
             }
             CommandGroup(after: .textEditing) {
                 Button(L10n.text("Search chats")) { searchChats?() }
@@ -42,7 +50,7 @@ struct SwiftyGrokApp: App {
                 if let error = app.quickInput.shortcutError { Text(error) }
                 Button(L10n.text("Refresh chat")) { Task { await app.store?.loadSelectedConversation() } }
                     .keyboardShortcut("r", modifiers: .command)
-                    .disabled(app.store?.selectedConversationID == nil || app.store?.isSending == true)
+                    .disabled(app.store?.selectionID == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true)
                 Button(L10n.text("Refresh history")) { Task { await app.store?.refreshHistory() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(app.store == nil)
@@ -55,6 +63,8 @@ struct SwiftyGrokApp: App {
     weak var quickInput: QuickInputController?
     private weak var app: AppModel?
     private var pendingFileURLs: [URL] = []
+    private var pendingPublicChatLink: PublicChatLink?
+    private var pendingSharedFiles: [SharedFile] = []
     private var pendingWidgetRefresh = false
     private var appearanceObservation: NSKeyValueObservation?
 
@@ -64,21 +74,41 @@ struct SwiftyGrokApp: App {
         ReplyNotifications.shared.configure { [weak app] id in app?.openReplyNotification(id) }
         WindowScreenshotShortcut.shared.configure { [weak app] in app?.captureWindowScreenshot() }
         if pendingWidgetRefresh { pendingWidgetRefresh = false; app.openWidgetSettings() }
+        if let link = pendingPublicChatLink {
+            pendingPublicChatLink = nil
+            app.receivePublicChat(link)
+        }
         if !pendingFileURLs.isEmpty {
             let urls = pendingFileURLs
             pendingFileURLs.removeAll()
-            app.receiveFinderFiles(urls)
+            app.receiveFiles(urls)
+        }
+        if !pendingSharedFiles.isEmpty {
+            let files = pendingSharedFiles
+            pendingSharedFiles.removeAll()
+            app.receiveSharedFiles(files)
         }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        if let link = urls.compactMap({ PublicChatLink(handoffURL: $0) }).last {
+            if let app { app.receivePublicChat(link) } else { pendingPublicChatLink = link }
+        }
         if urls.contains(where: { $0.scheme == "swiftygrok" && $0.host == "widgets" && $0.path == "/refresh" }) {
             if let app { app.openWidgetSettings() } else { pendingWidgetRefresh = true }
         }
-        let files = urls.flatMap { $0.isFileURL ? [$0] : FinderAttachmentHandoff.takeFiles(from: $0) }
-        guard !files.isEmpty else { return }
-        if let app { app.receiveFinderFiles(files) }
-        else { pendingFileURLs.append(contentsOf: files) }
+        let files = urls.filter(\.isFileURL)
+        if !files.isEmpty {
+            if let app { app.receiveFiles(files) }
+            else { pendingFileURLs.append(contentsOf: files) }
+        }
+        let shared = urls.flatMap { ShareAttachmentHandoff.takeFiles(from: $0) }
+        if !shared.isEmpty {
+            if let app { app.receiveSharedFiles(shared) }
+            else if (pendingSharedFiles + shared).reduce(0, { $0 + $1.data.count }) <= ShareAttachmentHandoff.maximumTotalSize {
+                pendingSharedFiles.append(contentsOf: shared)
+            }
+        }
     }
     private lazy var settingsMenuIcon: NSImage? = {
         let image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: L10n.text("Settings"))
@@ -95,6 +125,7 @@ struct SwiftyGrokApp: App {
         appearanceObservation = nil
         NotificationCenter.default.removeObserver(self)
         quickInput?.stop()
+        VoiceDictation.shared.stop()
         WindowScreenshotShortcut.shared.stop()
         UsageMonitor.shared.stop()
     }
@@ -105,10 +136,10 @@ struct SwiftyGrokApp: App {
         for name in [NSWindow.willMiniaturizeNotification, NSWindow.didMiniaturizeNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(refreshWindowBadge(_:)), name: name, object: nil)
         }
-        // SwiftUI can recreate command items. Apply AppKit's explicit image
-        // visibility both during menu construction and when a menu opens.
+        // SwiftUI can recreate menus. Restore their custom titles and images
+        // both during construction and when a menu opens.
         for name in [NSMenu.didAddItemNotification, NSMenu.didBeginTrackingNotification] {
-            NotificationCenter.default.addObserver(self, selector: #selector(menuNeedsIcon(_:)), name: name, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(menuNeedsAppearanceUpdate(_:)), name: name, object: nil)
         }
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -116,11 +147,25 @@ struct SwiftyGrokApp: App {
             Task { @MainActor [weak self] in self?.refreshApplicationIcon() }
         }
         refreshApplicationIcon()
-        refreshSettingsMenuIcon()
-        DispatchQueue.main.async { [weak self] in self?.refreshSettingsMenuIcon() }
+        refreshMenuAppearance()
+        DispatchQueue.main.async { [weak self] in self?.refreshMenuAppearance() }
     }
 
-    @objc private func menuNeedsIcon(_ notification: Notification) { refreshSettingsMenuIcon() }
+    @objc private func menuNeedsAppearanceUpdate(_ notification: Notification) { refreshMenuAppearance() }
+
+    private func refreshMenuAppearance() {
+        refreshSettingsMenuIcon()
+        // Find the standard File menu by our New Chat command, independently
+        // of the system language or the position of other top-level menus.
+        guard let item = NSApp.mainMenu?.items.first(where: { item in
+            item.submenu?.items.contains {
+                $0.keyEquivalent.lowercased() == "n" && $0.keyEquivalentModifierMask == .command
+            } == true
+        }), let menu = item.submenu else { return }
+        let title = L10n.text("Chats")
+        if item.title != title { item.title = title }
+        if menu.title != title { menu.title = title }
+    }
 
     private func refreshSettingsMenuIcon() {
         guard let menu = NSApp.mainMenu?.items.first?.submenu,
@@ -158,11 +203,14 @@ struct SwiftyGrokApp: App {
             let action = openWindow
             app.quickInput.configure(app: app, showMain: { action(id: "main") })
         }
-        .onChange(of: app.canImportFinderFiles, initial: true) { _, ready in
-            if ready { app.importPendingFinderFiles() }
+        .onChange(of: app.canImportAttachments, initial: true) { _, ready in
+            if ready { app.importPendingAttachments() }
         }
         .onChange(of: app.canOpenNotificationConversation, initial: true) { _, ready in
             if ready { app.openPendingNotificationConversation() }
+        }
+        .onChange(of: app.canOpenPublicChat, initial: true) { _, ready in
+            if ready { app.openPendingPublicChat() }
         }
         .sheet(isPresented: $app.showLogin) { LoginView(app: app, canDismiss: true).frame(width: 920, height: 760) }
         .modifier(CopyFeedbackOverlay())

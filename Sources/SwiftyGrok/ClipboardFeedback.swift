@@ -7,9 +7,11 @@ import GrokCore
     static let shared = ClipboardFeedback()
     private(set) var sequence = 0
 
-    func copy(_ text: String) {
+    @discardableResult func copy(_ text: String) -> Bool {
         NSPasteboard.general.clearContents()
-        if NSPasteboard.general.setString(text, forType: .string) { sequence += 1 }
+        guard NSPasteboard.general.setString(text, forType: .string) else { return false }
+        sequence += 1
+        return true
     }
 }
 

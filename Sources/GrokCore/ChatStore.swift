@@ -8,6 +8,8 @@ public final class ChatStore {
     public private(set) var branches: [ChatBranch] = []
     public private(set) var selectedLeafID: String?
     public private(set) var selectedConversationID: String?
+    public private(set) var publicChatLink: PublicChatLink?
+    public private(set) var isContinuingPublicChat = false
     public private(set) var selectedProjectID: String?
     public private(set) var isLoadingHistory = false
     public private(set) var isLoadingMessages = false
@@ -15,6 +17,8 @@ public final class ChatStore {
     public private(set) var isThinking = false
     public private(set) var isUploadingFiles = false
     public private(set) var isReadingFiles = false
+    public private(set) var isDictating = false
+    public private(set) var isTranscribing = false
     public private(set) var draftFiles: [DraftFile] = []
     public private(set) var isTemporary = false
     public private(set) var needsReload = false
@@ -43,6 +47,8 @@ public final class ChatStore {
     @ObservationIgnored private var fileDrafts: [String: [DraftFile]] = [:]
     @ObservationIgnored private var uploadedFileIDs: [UUID: String] = [:]
     @ObservationIgnored private var sendTask: Task<Void, Never>?
+    @ObservationIgnored private var dictationTask: Task<Void, Never>?
+    @ObservationIgnored private var dictationID: UUID?
     @ObservationIgnored private var loadGeneration = UUID()
     @ObservationIgnored private var historyGeneration = UUID()
     @ObservationIgnored private var nextPageToken: String?
@@ -65,6 +71,8 @@ public final class ChatStore {
         return selectedConversationID.flatMap { summary(id: $0)?.title } ?? selectedTitle
     }
 
+    public var selectionID: String? { publicChatLink.map { "public:\($0.id)" } ?? selectedConversationID }
+
     public func summary(id: String) -> ChatSummary? {
         conversations.first { $0.id == id } ?? projectConversationMetadata[id]
     }
@@ -79,10 +87,60 @@ public final class ChatStore {
         }
     }
     public var canSend: Bool {
-        !isSending && !isReadingFiles && updatingConversations.isEmpty && !isLoadingMessages && !needsReload && !requiresLogin &&
+        publicChatLink == nil && !isContinuingPublicChat && !isSending && !isReadingFiles && !isDictating && updatingConversations.isEmpty && !isLoadingMessages && !needsReload && !requiresLogin &&
         modes.contains(where: { $0.id == modeID && $0.isAvailable }) && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftFiles.isEmpty)
     }
-    public var canAttachFiles: Bool { !isSending && !isReadingFiles }
+    public var canAttachFiles: Bool { publicChatLink == nil && !isContinuingPublicChat && !isSending && !isReadingFiles && !isDictating }
+    public var canDictate: Bool {
+        publicChatLink == nil && !isContinuingPublicChat && !isSending && !isReadingFiles && !isDictating && !isLoadingMessages && !needsReload && !requiresLogin && updatingConversations.isEmpty
+    }
+
+    /// Reserve this draft before asking for microphone access. Recognition only
+    /// appends text; it never sends a message or creates an audio attachment.
+    public func startDictation(record: @escaping @MainActor () async throws -> Data) {
+        guard canDictate else { return }
+        let id = UUID()
+        dictationID = id
+        isDictating = true
+        dictationTask = Task {
+            defer {
+                if dictationID == id {
+                    dictationID = nil
+                    dictationTask = nil
+                    isDictating = false
+                    isTranscribing = false
+                }
+            }
+            do {
+                let audio = try await record()
+                try Task.checkCancellation()
+                guard dictationID == id, !requiresLogin else { return }
+                isTranscribing = true
+                let text = try await service.transcribe(audio: audio).trimmingCharacters(in: .whitespacesAndNewlines)
+                try Task.checkCancellation()
+                guard dictationID == id, !requiresLogin else { return }
+                guard !text.isEmpty else { throw ClientFailure.noSpeech }
+                // Preserve edits made while recording or waiting for Grok.
+                let separator = draft.isEmpty || draft.last?.isWhitespace == true ? "" : " "
+                draft += separator + text
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled, dictationID == id else { return }
+                presentError(error)
+            }
+        }
+    }
+
+    public func cancelDictation() {
+        dictationID = nil
+        dictationTask?.cancel()
+        dictationTask = nil
+        isDictating = false
+        isTranscribing = false
+    }
+
+    public func waitForDictation() async { await dictationTask?.value }
 
     private var draftKey: String {
         selectedConversationID ?? selectedProjectID.map { "__project:\($0)" } ?? "__new"
@@ -147,7 +205,7 @@ public final class ChatStore {
         drafts.merge(previous.drafts) { _, old in old }
         fileDrafts.merge(previous.fileDrafts) { _, old in old }
         uploadedFileIDs.merge(previous.uploadedFileIDs) { _, old in old }
-        if !previous.isTemporary {
+        if !previous.isTemporary && previous.publicChatLink == nil {
             let key = previous.draftKey
             drafts[key] = previous.draft
             fileDrafts[key] = previous.draftFiles
@@ -155,7 +213,7 @@ public final class ChatStore {
     }
 
     public func addFiles(_ files: [DraftFile]) {
-        guard !isSending else { return }
+        guard publicChatLink == nil, !isContinuingPublicChat, !isSending else { return }
         guard (draftFiles + files).reduce(0, { $0 + $1.data.count }) <= DraftFile.maximumTotalSize else {
             presentError(ClientFailure.filesTooLarge); return
         }
@@ -352,16 +410,17 @@ public final class ChatStore {
     }
 
     public func select(_ id: String?, projectID: String? = nil) {
-        guard !isSending, id != selectedConversationID || isTemporary || projectID != selectedProjectID,
+        guard !isSending, !isContinuingPublicChat, publicChatLink != nil || id != selectedConversationID || isTemporary || projectID != selectedProjectID,
               id.map({ !temporaryConversationIDs.contains($0) }) ?? true else { return }
         if let id, id == selectedConversationID, !isTemporary {
             selectedProjectID = projectID
             return
         }
-        if !isTemporary {
+        if !isTemporary && publicChatLink == nil {
             drafts[draftKey] = draft
             fileDrafts[draftKey] = draftFiles
         }
+        publicChatLink = nil
         isTemporary = false
         selectedConversationID = id
         selectedProjectID = projectID
@@ -383,7 +442,8 @@ public final class ChatStore {
     }
 
     public func newChat() {
-        guard !isSending else { return }
+        guard !isSending, !isContinuingPublicChat else { return }
+        if publicChatLink != nil { select(nil); return }
         if isTemporary {
             selectedConversationID = nil
             draft = ""
@@ -395,8 +455,24 @@ public final class ChatStore {
         else { clearThread() }
     }
 
+    public func newPrivateChat() {
+        guard !isSending, !isContinuingPublicChat, updatingConversations.isEmpty else { return }
+        if !isTemporary && publicChatLink == nil {
+            drafts[draftKey] = draft
+            fileDrafts[draftKey] = draftFiles
+        }
+        publicChatLink = nil
+        isTemporary = true
+        selectedConversationID = nil
+        selectedProjectID = nil
+        selectedTitle = L10n.text("New chat")
+        draft = ""
+        draftFiles = []
+        clearThread()
+    }
+
     public func setTemporary(_ enabled: Bool) {
-        guard !isSending, updatingConversations.isEmpty, enabled != isTemporary else { return }
+        guard publicChatLink == nil, !isContinuingPublicChat, !isSending, updatingConversations.isEmpty, enabled != isTemporary else { return }
         let wasEmpty = selectedConversationID == nil && selectedProjectID == nil && messages.isEmpty
         let unsent = draft
         let unsentFiles = draftFiles
@@ -420,6 +496,7 @@ public final class ChatStore {
     }
 
     private func clearThread() {
+        cancelDictation()
         fileImportGeneration = UUID()
         loadGeneration = UUID()
         isLoadingMessages = false
@@ -433,7 +510,75 @@ public final class ChatStore {
     }
 
     public func loadSelectedConversation() async {
+        if let publicChatLink { await loadPublicChat(publicChatLink); return }
         await loadSelectedConversation(allowDuringSend: false)
+    }
+
+    public func selectPublicChat(_ link: PublicChatLink) {
+        guard !isSending, !isReadingFiles, !isContinuingPublicChat, !requiresLogin, publicChatLink != link else { return }
+        if !isTemporary && publicChatLink == nil {
+            drafts[draftKey] = draft
+            fileDrafts[draftKey] = draftFiles
+        }
+        clearThread()
+        publicChatLink = link
+        selectedConversationID = nil
+        selectedProjectID = nil
+        selectedTitle = L10n.text("Public chat")
+        isTemporary = false
+        draft = ""
+        draftFiles = []
+        needsReload = true
+    }
+
+    private func loadPublicChat(_ link: PublicChatLink) async {
+        guard !isContinuingPublicChat else { return }
+        let generation = UUID()
+        loadGeneration = generation
+        isLoadingMessages = true
+        needsReload = true
+        defer { if loadGeneration == generation { isLoadingMessages = false } }
+        do {
+            let preview = try await service.publicChat(link)
+            try Task.checkCancellation()
+            guard loadGeneration == generation, publicChatLink == link else { return }
+            let path = try preview.thread.path()
+            thread = preview.thread
+            messages = path
+            branches = preview.thread.branches
+            selectedLeafID = path.last?.id
+            selectedTitle = preview.summary.title
+            needsReload = false
+            error = nil
+        } catch {
+            guard !Task.isCancelled, loadGeneration == generation, publicChatLink == link else { return }
+            presentError(error)
+        }
+    }
+
+    public func continuePublicChat() async {
+        guard let link = publicChatLink, !isLoadingMessages, !needsReload, !requiresLogin,
+              !isContinuingPublicChat, !messages.isEmpty else { return }
+        let generation = sessionGeneration
+        isContinuingPublicChat = true
+        defer { isContinuingPublicChat = false }
+        do {
+            let owned = try await service.continuePublicChat(link)
+            // Commit the new ID before loading its thread. A failed load must
+            // offer refresh on the owned chat, never another clone request.
+            guard generation == sessionGeneration, publicChatLink == link else { return }
+            publicChatLink = nil
+            selectedConversationID = owned.id
+            selectedTitle = owned.title
+            conversations.removeAll { $0.id == owned.id }
+            conversations = Self.ordered([owned] + conversations)
+            historyGeneration = UUID()
+            isLoadingHistory = false
+            clearThread()
+        } catch {
+            guard !Task.isCancelled, generation == sessionGeneration, publicChatLink == link else { return }
+            presentError(error)
+        }
     }
 
     private func loadSelectedConversation(allowDuringSend: Bool) async {
@@ -606,6 +751,7 @@ public final class ChatStore {
 
     /// Call on logout/replacement so in-flight callbacks cannot update a later session.
     public func shutdown() {
+        cancelDictation()
         sessionGeneration = UUID()
         sendTask?.cancel()
         loadGeneration = UUID()

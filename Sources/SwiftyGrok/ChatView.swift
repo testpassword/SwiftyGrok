@@ -15,6 +15,7 @@ import UniformTypeIdentifiers
     @State private var chatToDelete: ChatSummary?
     @State private var showDelete = false
     @State private var shareTarget: ConversationShareTarget?
+    @State private var shareAnchor: ShareAnchor?
     @State private var showCreateProject = false
     @State private var projectToRename: GrokProject?
     @State private var projectToDelete: GrokProject?
@@ -28,6 +29,19 @@ import UniformTypeIdentifiers
     @Environment(\.openURL) private var openURL
     @Environment(\.colorScheme) private var colorScheme
 
+    private enum ShareAnchor: Equatable {
+        case toolbar
+        case row(String)
+    }
+
+    private func sharePresentation(at anchor: ShareAnchor) -> Binding<ConversationShareTarget?> {
+        Binding(get: { shareAnchor == anchor ? shareTarget : nil }, set: { target in
+            guard shareAnchor == anchor else { return }
+            shareTarget = target
+            if target == nil { shareAnchor = nil }
+        })
+    }
+
     private var actionBackground: Color { colorScheme == .dark ? .white : .black }
     private var actionForeground: Color { colorScheme == .dark ? .black : .white }
 
@@ -35,6 +49,7 @@ import UniformTypeIdentifiers
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 420)
+                .disabled(store.isContinuingPublicChat)
         } detail: {
             VStack(spacing: 0) {
                 if let error = store.error { errorBanner(error) }
@@ -57,6 +72,11 @@ import UniformTypeIdentifiers
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     if store.isLoadingMessages { ProgressView().controlSize(.small) }
+                    if let link = store.publicChatLink {
+                        Button { openURL(link.url) } label: {
+                            Label(L10n.text("Browser"), systemImage: "safari")
+                        }.help(L10n.text("Open in browser"))
+                    }
                     if !store.isTemporary, store.branches.count > 1 {
                         Menu {
                             ForEach(Array(store.branches.enumerated()), id: \.element.id) { index, branch in
@@ -77,12 +97,16 @@ import UniformTypeIdentifiers
                         .help(L10n.text("Open in browser")).accessibilityLabel(L10n.text("Open in browser"))
                         Button {
                             guard let responseID = store.selectedLeafID else { return }
+                            shareAnchor = .toolbar
                             shareTarget = ConversationShareTarget(id: id, title: store.title, responseID: responseID)
                         } label: {
                             Label(L10n.text("Share"), systemImage: "square.and.arrow.up")
                         }
                         .help(L10n.text("Share")).accessibilityLabel(L10n.text("Share"))
                         .disabled(store.isSending || store.isLoadingMessages || store.needsReload || store.selectedLeafID == nil || store.updatingConversations.contains(id))
+                        .popover(item: sharePresentation(at: .toolbar), arrowEdge: .top) { target in
+                            ConversationSharePopover(target: target, store: store)
+                        }
                         if !projectTargets.isEmpty {
                             Menu {
                                 ForEach(projectTargets) { project in
@@ -115,7 +139,7 @@ import UniformTypeIdentifiers
             }
         }
         .focusedSceneValue(\.chatSearch, activateSearch)
-        .task(id: store.selectedConversationID) { await store.loadSelectedConversation() }
+        .task(id: store.selectionID) { await store.loadSelectedConversation() }
         .task { await store.loadModes() }
         .task { await store.loadProfile() }
         .task { await app.projects?.load(ifNeeded: true) }
@@ -128,7 +152,6 @@ import UniformTypeIdentifiers
         .sheet(item: $projectToRename) { project in
             if let projects = app.projects { RenameProjectSheet(project: project, projects: projects) }
         }
-        .sheet(item: $shareTarget) { target in ConversationShareSheet(target: target, store: store) }
         .task(id: store.search) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
             await store.refreshHistory()
@@ -371,6 +394,7 @@ import UniformTypeIdentifiers
                         openURL(url)
                     }
                 } share: {
+                    shareAnchor = .row("\(scope)-\(chat.id)")
                     shareTarget = ConversationShareTarget(id: chat.id, title: chat.title,
                                                           responseID: chat.id == store.selectedConversationID ? store.selectedLeafID : nil)
                 } delete: {
@@ -378,6 +402,9 @@ import UniformTypeIdentifiers
                 }
             }
             .disabled(store.updatingConversations.contains(chat.id))
+            .popover(item: sharePresentation(at: .row("\(scope)-\(chat.id)")), arrowEdge: .leading) { target in
+                ConversationSharePopover(target: target, store: store)
+            }
             .accessibilityValue(store.selectedConversationID == chat.id ? L10n.text("Selected") : "")
             .id("\(scope)-\(chat.id)")
             .listRowSeparator(.hidden)
@@ -399,7 +426,7 @@ import UniformTypeIdentifiers
     }
 
     private func handleHistoryShortcut(_ event: NSEvent) -> Bool {
-        guard columnVisibility != .detailOnly, !store.isSending, !store.isTemporary, !searchFocused,
+        guard columnVisibility != .detailOnly, !store.isSending, !store.isContinuingPublicChat, !store.isTemporary, !searchFocused,
               !showRename, !showDelete, !confirmSignOut, !showCreateProject, projectToRename == nil,
               !showDeleteProject, shareTarget == nil, !app.showLogin,
               let chat = visibleHistoryChats.first(where: { $0.id == store.selectedConversationID }),
@@ -537,7 +564,15 @@ import UniformTypeIdentifiers
     }
 
     @ViewBuilder private var emptyConversation: some View {
-        if selectedProject != nil && store.selectedConversationID == nil {
+        if store.publicChatLink != nil {
+            ContentUnavailableView {
+                Label(L10n.text("Public chat"), systemImage: "bubble.left.and.bubble.right")
+            } description: {
+                Text(L10n.text("Could not load this public chat."))
+            } actions: {
+                Button(L10n.text("Retry")) { Task { await store.loadSelectedConversation() } }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if selectedProject != nil && store.selectedConversationID == nil {
             VStack(spacing: 18) {
                 Image(systemName: "bubble.left").font(.system(size: 32, weight: .regular))
                     .frame(width: 88, height: 88)
@@ -586,7 +621,7 @@ import UniformTypeIdentifiers
                     ForEach(store.messages) { message in
                         MessageView(message: message, isStreaming: store.isSending && message.id == store.messages.last?.id,
                                     isThinking: store.isSending && store.isThinking && message.id == store.messages.last?.id,
-                                    media: app.media, conversationURL: store.isTemporary ? nil : store.selectedConversationID.flatMap { URL(string: "https://grok.com/c/\($0)") })
+                                    media: app.media, conversationURL: store.publicChatLink?.url ?? (store.isTemporary ? nil : store.selectedConversationID.flatMap { URL(string: "https://grok.com/c/\($0)") }))
                             .id(message.id)
                     }
                     Color.clear.frame(height: 1).id("bottom")
@@ -605,12 +640,40 @@ import UniformTypeIdentifiers
         }
     }
 
-    private var composer: some View {
-        ChatComposer(store: store, followResponse: $followResponse, focusRequest: composerFocusRequest, onSend: {
-            guard store.selectedProjectID == nil || app.projects?.updatingProjectID != store.selectedProjectID else { return }
-            store.send()
-        })
-        .disabled(store.selectedProjectID != nil && app.projects?.updatingProjectID == store.selectedProjectID)
+    @ViewBuilder private var composer: some View {
+        if store.publicChatLink != nil {
+            continueChatButton
+                .disabled(store.isLoadingMessages || store.needsReload || store.requiresLogin || store.isContinuingPublicChat)
+                .help(L10n.text("Create a copy in your chat history"))
+                .padding(.horizontal, 18).padding(.vertical, 14)
+                .frame(maxWidth: .infinity)
+        } else {
+            ChatComposer(store: store, followResponse: $followResponse, focusRequest: composerFocusRequest, onSend: {
+                guard store.selectedProjectID == nil || app.projects?.updatingProjectID != store.selectedProjectID else { return }
+                store.send()
+            })
+            .disabled(store.selectedProjectID != nil && app.projects?.updatingProjectID == store.selectedProjectID)
+        }
+    }
+
+    @ViewBuilder private var continueChatButton: some View {
+        if #available(macOS 26.0, *) {
+            Button { Task { await store.continuePublicChat() } } label: { continueChatLabel }
+                .buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.regular)
+        } else {
+            Button { Task { await store.continuePublicChat() } } label: {
+                continueChatLabel.padding(.horizontal, 16).padding(.vertical, 10)
+                    .modifier(FloatingGlass(cornerRadius: 22))
+            }.buttonStyle(.plain)
+        }
+    }
+
+    private var continueChatLabel: some View {
+        HStack(spacing: 8) {
+            if store.isContinuingPublicChat { ProgressView().controlSize(.small) }
+            else { Image(systemName: "bubble.left.and.bubble.right") }
+            Text(L10n.text("Continue chat"))
+        }.font(.system(size: 14, weight: .semibold)).padding(.horizontal, 6).frame(minHeight: 26)
     }
 
     private func errorBanner(_ error: DisplayError) -> some View {
@@ -618,16 +681,24 @@ import UniformTypeIdentifiers
             Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 8) {
                 Text(error.message).font(.callout).textSelection(.enabled)
+                if error.systemPermission == .screenRecording { PermissionRecoveryHint() }
                 HStack {
+                    if let permission = error.systemPermission {
+                        Button(L10n.text("Open System Settings")) { openURL(permission.settingsURL) }
+                    }
                     if error.needsLogin || store.requiresLogin {
                         Button(L10n.text("Sign in again")) { app.showLogin = true }
                     } else {
-                        if store.isTemporary && store.needsReload {
-                            Button(L10n.text("New private conversation")) { store.newChat() }
-                        } else if store.selectedConversationID != nil {
-                            Button(L10n.text("Refresh chat")) { Task { await store.loadSelectedConversation() } }
+                        if error.systemPermission == nil && (store.needsReload || error.allowsSessionRefresh) {
+                            if store.isTemporary && store.needsReload {
+                                Button(L10n.text("New private conversation")) { store.newChat() }
+                            } else if store.selectionID != nil {
+                                Button(L10n.text("Refresh chat")) { Task { await store.loadSelectedConversation() } }
+                            }
                         }
-                        Button(L10n.text("Refresh session")) { app.showLogin = true }
+                        if error.allowsSessionRefresh {
+                            Button(L10n.text("Refresh session")) { app.showLogin = true }
+                        }
                     }
                     if let text = store.recoveryText {
                         Button(L10n.text("Copy sent text")) {
@@ -643,6 +714,18 @@ import UniformTypeIdentifiers
             }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading).background(.orange.opacity(0.08))
+    }
+}
+
+struct PermissionRecoveryHint: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(L10n.text("If access was already granted, remove SwiftyGrok from this permission list, add the app again, and enable access."))
+                .foregroundStyle(.secondary).textSelection(.enabled)
+            Link(L10n.text("Learn more"),
+                 destination: URL(string: "https://github.com/testpassword/SwiftyGrok/issues/1")!)
+        }
+        .font(.callout)
     }
 }
 

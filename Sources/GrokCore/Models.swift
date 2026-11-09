@@ -25,6 +25,15 @@ public struct HistoryPage: Sendable {
     }
 }
 
+public struct PublicChat: Sendable {
+    public let summary: ChatSummary
+    public let thread: ChatThread
+    public init(summary: ChatSummary, thread: ChatThread) {
+        self.summary = summary
+        self.thread = thread
+    }
+}
+
 public struct ChatSummary: Identifiable, Equatable, Sendable {
     public let id: String
     public var title: String
@@ -185,7 +194,7 @@ public struct ChatMode: Identifiable, Equatable, Sendable {
 }
 
 public enum ClientFailure: Error, LocalizedError {
-    case invalidThread, emptyConversation, emptyReply, interruptedReply, temporaryReplyInterrupted, invalidCookies, noSession, uploadFailed, filesTooLarge
+    case invalidThread, emptyConversation, emptyReply, interruptedReply, temporaryReplyInterrupted, invalidCookies, noSession, uploadFailed, filesTooLarge, noSpeech
     public var errorDescription: String? {
         switch self {
         case .invalidThread: return L10n.text("Could not restore the message thread. Refresh the chat before replying.")
@@ -197,6 +206,7 @@ public enum ClientFailure: Error, LocalizedError {
         case .noSession: return L10n.text("Sign in to your Grok account.")
         case .uploadFailed: return L10n.text("Could not confirm the file upload. Please try again.")
         case .filesTooLarge: return L10n.text("The total size of attached files must not exceed 50 MB.")
+        case .noSpeech: return L10n.text("No speech was recognized. Please try again.")
         }
     }
 }

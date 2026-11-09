@@ -28,6 +28,7 @@
 "Could not access Keychain: %@" = "Не удалось получить доступ к Keychain: %@";
 "Could not confirm the file upload. Please try again." = "Не удалось получить подтверждение загрузки файла. Попробуйте ещё раз.";
 "Could not create a link." = "Не удалось создать ссылку.";
+"Could not copy the link. Please try again." = "Не удалось скопировать ссылку. Попробуйте ещё раз.";
 "Could not enable quick input (%@)." = "Не удалось подключить быстрый ввод (%@).";
 "Could not open preview: %@" = "Не удалось открыть предпросмотр: %@";
 "Could not read Grok streaming response" = "Не удалось прочитать потоковый ответ Grok";
@@ -59,6 +60,8 @@
 "Mode" = "Режим";
 "Network error: %@" = "Ошибка сети: %@";
 "New chat" = "Новый чат";
+"New private chat" = "Новый приватный чат";
+"Chats" = "Чаты";
 "New chat · ⌘N" = "Новый чат · ⌘N";
 "New private conversation" = "Новый приватный разговор";
 "No messages in this chat yet" = "В этом чате пока нет сообщений";
@@ -69,6 +72,9 @@
 "On" = "Включено";
 "On grok.com, open DevTools → Network, select a request to /rest/app-chat/conversations, and copy the Cookie header value. You can also import swift-grok JSON or exported cookies for grok.com." = "На grok.com откройте DevTools → Network, выберите запрос к /rest/app-chat/conversations и скопируйте значение заголовка Cookie. Также можно загрузить JSON от swift-grok или экспорт cookies для grok.com.";
 "Open" = "Открыть";
+"Open System Settings" = "Открыть системные настройки";
+"If access was already granted, remove SwiftyGrok from this permission list, add the app again, and enable access." = "Если доступ уже был разрешён, удалите SwiftyGrok из списка приложений в этом разделе, затем добавьте приложение заново и включите доступ.";
+"Learn more" = "Подробнее";
 "Open JSON…" = "Открыть JSON…";
 "Open in Grok" = "Открыть в Grok";
 "Open in browser" = "Открыть в браузере";
@@ -148,8 +154,8 @@
 "Transparency" = "Прозрачность";
 "Opaque" = "Непрозрачная";
 "Transparent" = "Прозрачная";
-"Configure Finder extension…" = "Настроить расширение Finder…";
-"Enable SwiftyGrok in macOS to attach files from Finder's context menu to the open chat or a new draft." = "Включите SwiftyGrok в macOS, чтобы прикреплять файлы из меню Finder к открытому чату или новому черновику.";
+"Configure sharing extension…" = "Настроить расширение «Поделиться»…";
+"Enable Open in SwiftyGrok in macOS sharing extensions, then use the system Share menu to open public Grok chats or attach files to your open chat or a new draft." = "Включите «Открыть в SwiftyGrok» в расширениях «Поделиться» macOS, затем используйте системное меню «Поделиться» для просмотра публичных чатов Grok или прикрепления файлов к открытому чату или новому черновику.";
 "About SwiftyGrok" = "О программе SwiftyGrok";
 "A native, unofficial Grok client for macOS: chats, files, and quick input." = "Нативный неофициальный клиент Grok для macOS: чаты, файлы и быстрый ввод.";
 "GitHub Repository" = "Репозиторий на GitHub";
@@ -223,3 +229,17 @@
 "Allow screen recording for SwiftyGrok in System Settings → Privacy & Security → Screen Recording." = "Разрешите запись экрана для SwiftyGrok в Системных настройках → Конфиденциальность и безопасность → Запись экрана.";
 "Could not create the screenshot." = "Не удалось создать снимок окна.";
 "Wait for the current reply or file import before attaching a screenshot." = "Дождитесь окончания ответа или импорта файлов перед прикреплением снимка.";
+"Dictate a message" = "Надиктовать сообщение";
+"Finish dictation" = "Завершить диктовку";
+"Cancel dictation" = "Отменить диктовку";
+"Recording…" = "Запись…";
+"Transcribing with Grok…" = "Grok распознаёт речь…";
+"Accessing microphone…" = "Подключение микрофона…";
+"Allow microphone access for SwiftyGrok in System Settings → Privacy & Security → Microphone." = "Разрешите SwiftyGrok доступ к микрофону в Системных настройках → Конфиденциальность и безопасность → Микрофон.";
+"No microphone is available." = "Микрофон недоступен.";
+"Could not record audio. Check your microphone and try again." = "Не удалось записать звук. Проверьте микрофон и попробуйте ещё раз.";
+"No speech was recognized. Please try again." = "Речь не распознана. Попробуйте ещё раз.";
+"Public chat" = "Публичный чат";
+"Continue chat" = "Продолжить чат";
+"Create a copy in your chat history" = "Создать копию в вашей истории чатов";
+"Could not load this public chat." = "Не удалось загрузить этот публичный чат.";

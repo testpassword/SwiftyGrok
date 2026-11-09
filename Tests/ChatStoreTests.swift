@@ -25,6 +25,24 @@ private final class FakeService: GrokServing {
     var mutationHook: (() async -> Void)?
     var modeCatalog = ChatMode.fallback
     var modeHook: (() async -> Void)?
+    var transcriptionHook: ((Data) async throws -> String)?
+    var recordedAudio: [Data] = []
+    var publicChatHook: ((PublicChatLink) async throws -> PublicChat)?
+    var continuePublicChatHook: ((PublicChatLink) async throws -> ChatSummary)?
+    var cloneCalls = 0
+    func publicChat(_ link: PublicChatLink) async throws -> PublicChat {
+        if let publicChatHook { return try await publicChatHook(link) }
+        return PublicChat(summary: ChatSummary(id: "original", title: "Shared title"), thread: loaded)
+    }
+    func continuePublicChat(_ link: PublicChatLink) async throws -> ChatSummary {
+        cloneCalls += 1
+        if let continuePublicChatHook { return try await continuePublicChatHook(link) }
+        return ChatSummary(id: "owned-copy", title: "Shared title")
+    }
+    func transcribe(audio: Data) async throws -> String {
+        recordedAudio.append(audio)
+        return try await transcriptionHook?(audio) ?? "Recognized speech"
+    }
     func shareConversation(id: String, responseID: String) async throws -> URL {
         if let mutationError { throw mutationError }
         await mutationHook?()
@@ -79,6 +97,288 @@ private final class FakeService: GrokServing {
 }
 
 final class ChatStoreTests: XCTestCase {
+    @MainActor func testPublicChatIsReadOnlyAndDoesNotEnterHistory() async throws {
+        let service = FakeService()
+        let store = ChatStore(service: service, conversations: service.history)
+        let link = PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!
+        store.selectPublicChat(link)
+        await store.loadSelectedConversation()
+        XCTAssertEqual(store.title, "Shared title")
+        XCTAssertEqual(store.messages.map(\.id), ["previous"])
+        XCTAssertNil(store.selectedConversationID)
+        XCTAssertNil(store.selectedProjectID)
+        XCTAssertEqual(store.publicChatLink, link)
+        XCTAssertEqual(store.conversations, service.history)
+        XCTAssertFalse(store.needsReload)
+        XCTAssertFalse(store.canAttachFiles)
+        XCTAssertFalse(store.canDictate)
+        store.addFiles([DraftFile(name: "no.txt", mimeType: "text/plain", data: Data([1]))])
+        XCTAssertTrue(store.draftFiles.isEmpty)
+        store.draft = "Do not send"
+        XCTAssertFalse(store.canSend)
+        store.send()
+        store.setTemporary(true)
+        XCTAssertFalse(store.isTemporary)
+        XCTAssertEqual(service.cloneCalls, 0)
+        XCTAssertTrue(service.calls.isEmpty)
+        XCTAssertTrue(service.mutations.isEmpty)
+        XCTAssertEqual(service.threadCalls, 0)
+    }
+
+    @MainActor func testLeavingPublicChatPreservesExistingDraftAndFiles() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        let file = DraftFile(name: "note.txt", mimeType: "text/plain", data: Data([1]))
+        store.draft = "Keep this"
+        store.addFiles([file])
+        let link = PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!
+        store.selectPublicChat(link)
+        await store.loadSelectedConversation()
+        store.selectPublicChat(link) // Sharing the same link must not erase the loaded preview.
+        XCTAssertFalse(store.messages.isEmpty)
+        let fresh = ChatStore(service: service)
+        fresh.select("quick-chat")
+        fresh.inheritDrafts(from: store)
+        fresh.newChat()
+        XCTAssertEqual(fresh.draft, "Keep this")
+        XCTAssertEqual(fresh.draftFiles, [file])
+        store.newChat()
+        XCTAssertNil(store.publicChatLink)
+        XCTAssertEqual(store.draft, "Keep this")
+        XCTAssertEqual(store.draftFiles, [file])
+        XCTAssertTrue(store.canAttachFiles)
+    }
+
+    @MainActor func testShutdownPreventsPendingCloneFromUpdatingLaterSession() async {
+        let service = FakeService()
+        var completion: CheckedContinuation<ChatSummary, Error>?
+        service.continuePublicChatHook = { _ in try await withCheckedThrowingContinuation { completion = $0 } }
+        let store = ChatStore(service: service)
+        store.selectPublicChat(PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!)
+        await store.loadSelectedConversation()
+        let cloning = Task { await store.continuePublicChat() }
+        while completion == nil { await Task.yield() }
+        store.shutdown()
+        completion?.resume(returning: ChatSummary(id: "old-account-copy", title: "Old copy"))
+        await cloning.value
+        XCTAssertTrue(store.conversations.isEmpty)
+        XCTAssertNil(store.selectedConversationID)
+        XCTAssertFalse(store.isContinuingPublicChat)
+    }
+
+    @MainActor func testContinuePublicChatCommitsCopyBeforeLoadingOwnedResponseIDs() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        store.selectPublicChat(PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!)
+        await store.loadSelectedConversation()
+        await store.continuePublicChat()
+        XCTAssertNil(store.publicChatLink)
+        XCTAssertEqual(store.selectedConversationID, "owned-copy")
+        XCTAssertEqual(store.conversations.map(\.id), ["owned-copy"])
+        XCTAssertTrue(store.needsReload)
+        XCTAssertTrue(store.messages.isEmpty)
+        store.draft = "Next"
+        XCTAssertFalse(store.canSend)
+        service.loaded = try! ChatThread(responses: [ChatMessage(id: "owned-leaf", role: .assistant, text: "Copied")])
+        await store.loadSelectedConversation()
+        XCTAssertTrue(store.canSend)
+        store.send()
+        await store.waitForSend()
+        XCTAssertEqual(service.cloneCalls, 1)
+        XCTAssertEqual(service.calls.first?.0, "owned-copy")
+        XCTAssertEqual(service.calls.first?.1, "owned-leaf")
+        XCTAssertFalse(service.calls.first?.4 ?? true)
+    }
+
+    @MainActor func testContinuePublicChatPreventsDoubleCloneAndNavigationWhilePending() async {
+        let service = FakeService()
+        var completion: CheckedContinuation<ChatSummary, Error>?
+        service.continuePublicChatHook = { _ in try await withCheckedThrowingContinuation { completion = $0 } }
+        let store = ChatStore(service: service)
+        let link = PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!
+        store.selectPublicChat(link)
+        await store.loadSelectedConversation()
+        let task = Task { await store.continuePublicChat() }
+        while completion == nil { await Task.yield() }
+        await store.continuePublicChat()
+        store.newChat()
+        store.newPrivateChat()
+        store.select("another-chat")
+        XCTAssertEqual(store.publicChatLink, link)
+        XCTAssertEqual(service.cloneCalls, 1)
+        completion?.resume(returning: ChatSummary(id: "owned-copy", title: "Copy"))
+        await task.value
+        XCTAssertEqual(store.selectedConversationID, "owned-copy")
+        XCTAssertFalse(store.isContinuingPublicChat)
+        XCTAssertFalse(store.isTemporary)
+    }
+
+    @MainActor func testFailedPublicLoadCannotCloneAndStalePreviewDoesNotReplaceSelection() async {
+        let service = FakeService()
+        var completion: CheckedContinuation<PublicChat, Error>?
+        service.publicChatHook = { _ in try await withCheckedThrowingContinuation { completion = $0 } }
+        let store = ChatStore(service: service)
+        let link = PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!
+        store.selectPublicChat(link)
+        let loading = Task { await store.loadSelectedConversation() }
+        while completion == nil { await Task.yield() }
+        await store.continuePublicChat()
+        XCTAssertEqual(service.cloneCalls, 0)
+        store.select("chat")
+        completion?.resume(returning: PublicChat(summary: ChatSummary(id: "original", title: "Stale"), thread: service.loaded))
+        await loading.value
+        XCTAssertEqual(store.selectedConversationID, "chat")
+        XCTAssertNil(store.publicChatLink)
+        XCTAssertTrue(store.messages.isEmpty)
+        service.publicChatHook = { _ in throw GrokError.notFound }
+        store.selectPublicChat(link)
+        await store.loadSelectedConversation()
+        await store.continuePublicChat()
+        XCTAssertNotNil(store.error)
+        XCTAssertTrue(store.needsReload)
+        XCTAssertEqual(service.cloneCalls, 0)
+        XCTAssertTrue(store.conversations.isEmpty)
+    }
+
+    @MainActor func testFailedCloneKeepsPreviewAndOwnedLoadFailureDoesNotCloneAgain() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        let link = PublicChatLink(url: URL(string: "https://grok.com/share/public-fixture")!)!
+        store.selectPublicChat(link)
+        await store.loadSelectedConversation()
+        service.continuePublicChatHook = { _ in throw URLError(.notConnectedToInternet) }
+        await store.continuePublicChat()
+        XCTAssertEqual(store.publicChatLink, link)
+        XCTAssertFalse(store.messages.isEmpty)
+        XCTAssertTrue(store.conversations.isEmpty)
+        XCTAssertFalse(store.isContinuingPublicChat)
+        service.continuePublicChatHook = nil
+        await store.continuePublicChat()
+        service.loadHook = { _ in throw GrokError.notFound }
+        await store.loadSelectedConversation()
+        await store.continuePublicChat()
+        XCTAssertEqual(service.cloneCalls, 2) // One failed explicit attempt, one successful creation.
+        XCTAssertNil(store.publicChatLink)
+        XCTAssertEqual(store.selectedConversationID, "owned-copy")
+        XCTAssertTrue(store.needsReload)
+    }
+
+    @MainActor func testDictationPreservesDraftEditsAndAttachmentsWithoutSending() async {
+        let service = FakeService()
+        var recognition: CheckedContinuation<String, Error>?
+        service.transcriptionHook = { _ in try await withCheckedThrowingContinuation { recognition = $0 } }
+        let store = ChatStore(service: service)
+        let file = DraftFile(name: "note.txt", mimeType: "text/plain", data: Data("Note".utf8))
+        store.draft = "Before"
+        store.addFiles([file])
+        store.startDictation { Data([1, 2, 3]) }
+        XCTAssertTrue(store.isDictating)
+        XCTAssertFalse(store.canSend)
+        XCTAssertFalse(store.canAttachFiles)
+        store.send()
+        while recognition == nil { await Task.yield() }
+        XCTAssertTrue(store.isTranscribing)
+        store.draft = "Edited\n"
+        recognition?.resume(returning: "  Dictated text  \n")
+        await store.waitForDictation()
+        XCTAssertEqual(service.recordedAudio, [Data([1, 2, 3])])
+        XCTAssertEqual(store.draft, "Edited\nDictated text")
+        XCTAssertEqual(store.draftFiles.map(\.id), [file.id])
+        XCTAssertTrue(service.calls.isEmpty)
+        XCTAssertTrue(service.uploads.isEmpty)
+        XCTAssertFalse(store.isDictating)
+        XCTAssertFalse(store.isTranscribing)
+        XCTAssertTrue(store.canSend)
+    }
+
+    @MainActor func testDictationAddsSpaceAndEmptySpeechPreservesDraft() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        store.draft = "Existing"
+        store.startDictation { Data([1]) }
+        await store.waitForDictation()
+        XCTAssertEqual(store.draft, "Existing Recognized speech")
+        service.transcriptionHook = { _ in " \n " }
+        store.startDictation { Data([1]) }
+        await store.waitForDictation()
+        XCTAssertEqual(store.draft, "Existing Recognized speech")
+        XCTAssertEqual(store.error?.message, ClientFailure.noSpeech.localizedDescription)
+        XCTAssertFalse(store.isDictating)
+    }
+
+    @MainActor func testSwitchingChatDuringRecordingDoesNotSendAudioToGrok() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        var recording: CheckedContinuation<Data, Never>?
+        store.startDictation { await withCheckedContinuation { recording = $0 } }
+        let finished = Task { await store.waitForDictation() }
+        while recording == nil { await Task.yield() }
+        store.selectProject("other")
+        recording?.resume(returning: Data([1]))
+        await finished.value
+        XCTAssertTrue(service.recordedAudio.isEmpty)
+        XCTAssertTrue(store.draft.isEmpty)
+        XCTAssertFalse(store.isDictating)
+        XCTAssertNil(store.error)
+    }
+
+    @MainActor func testLateDictationCannotLeakIntoNewDraftOrCancelNewRecording() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        var oldRecognition: CheckedContinuation<String, Error>?
+        service.transcriptionHook = { _ in try await withCheckedThrowingContinuation { oldRecognition = $0 } }
+        store.startDictation { Data([1]) }
+        let oldFinished = Task { await store.waitForDictation() }
+        while oldRecognition == nil { await Task.yield() }
+        store.newChat()
+        var newRecording: CheckedContinuation<Data, Error>?
+        store.startDictation { try await withCheckedThrowingContinuation { newRecording = $0 } }
+        while newRecording == nil { await Task.yield() }
+        oldRecognition?.resume(returning: "Old private speech")
+        await oldFinished.value
+        XCTAssertTrue(store.draft.isEmpty)
+        XCTAssertTrue(store.isDictating)
+        XCTAssertFalse(store.isTranscribing)
+        newRecording?.resume(throwing: CancellationError())
+        await store.waitForDictation()
+        XCTAssertFalse(store.isDictating)
+        XCTAssertNil(store.error)
+    }
+
+    @MainActor func testShutdownOrCancelDiscardsLateRecognitionErrorsAndText() async {
+        for shutdown in [false, true] {
+            let service = FakeService()
+            let store = ChatStore(service: service)
+            store.draft = "Keep"
+            var pending: CheckedContinuation<String, Error>?
+            service.transcriptionHook = { _ in try await withCheckedThrowingContinuation { pending = $0 } }
+            store.startDictation { Data([1]) }
+            let finished = Task { await store.waitForDictation() }
+            while pending == nil { await Task.yield() }
+            if shutdown { store.shutdown() } else { store.cancelDictation() }
+            if shutdown { pending?.resume(throwing: GrokError.unauthorized) }
+            else { pending?.resume(returning: "Cancelled speech") }
+            await finished.value
+            XCTAssertEqual(store.draft, "Keep")
+            XCTAssertNil(store.error)
+            XCTAssertFalse(store.requiresLogin)
+            XCTAssertFalse(store.isDictating)
+        }
+    }
+
+    @MainActor func testDictationReportsSessionFailureWithoutErasingDraft() async {
+        let service = FakeService()
+        service.transcriptionHook = { _ in throw GrokError.unauthorized }
+        let store = ChatStore(service: service)
+        store.draft = "Keep"
+        store.startDictation { Data([1]) }
+        await store.waitForDictation()
+        XCTAssertEqual(store.draft, "Keep")
+        XCTAssertTrue(store.requiresLogin)
+        XCTAssertFalse(store.isDictating)
+        XCTAssertFalse(store.canDictate)
+    }
+
     @MainActor func testUnavailableModeCannotBeSelectedOrSentAndCatalogFallsBackToAvailableMode() async {
         let service = FakeService()
         service.modeCatalog = [ChatMode(id: "fast", name: "Fast", isAvailable: false), ChatMode(id: "expert", name: "Expert")]
@@ -332,6 +632,56 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertEqual(service.historyCalls, 0)
     }
 
+    @MainActor func testSharedBytesAttachToCurrentChatWithoutSendingAndWaitForSignIn() async throws {
+        let service = FakeService()
+        service.historyHook = { _ in throw GrokError.unauthorized }
+        let expired = ChatStore(service: service)
+        await expired.refreshHistory()
+        let inbox = AttachmentInbox()
+        let file = DraftFile(name: "Shared.md", mimeType: "text/markdown", data: Data("Shared contents".utf8))
+        XCTAssertTrue(inbox.enqueue(files: [file]))
+        await inbox.deliver(to: expired)
+        XCTAssertFalse(inbox.isEmpty)
+        let connectedService = FakeService()
+        let connected = ChatStore(service: connectedService, conversations: connectedService.history)
+        connected.select("chat")
+        await connected.loadSelectedConversation()
+        connected.draft = "Keep"
+        await inbox.deliver(to: connected)
+        XCTAssertEqual(connected.selectedConversationID, "chat")
+        XCTAssertEqual(connected.draft, "Keep")
+        XCTAssertEqual(connected.draftFiles, [file])
+        XCTAssertTrue(connectedService.calls.isEmpty)
+        XCTAssertTrue(connectedService.uploads.isEmpty)
+        XCTAssertTrue(inbox.isEmpty)
+    }
+
+    @MainActor func testSharedBytesUseNewDraftAndClearQueuedDataOnLogout() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        let inbox = AttachmentInbox()
+        let file = DraftFile(name: "Shared.txt", mimeType: "text/plain", data: Data("Shared contents".utf8))
+        XCTAssertTrue(inbox.enqueue(files: [file]))
+        await inbox.deliver(to: store)
+        XCTAssertNil(store.selectedConversationID)
+        XCTAssertEqual(store.draftFiles, [file])
+        XCTAssertTrue(service.calls.isEmpty)
+        XCTAssertTrue(inbox.enqueue(files: [file]))
+        inbox.removeAll()
+        let fresh = ChatStore(service: service)
+        await inbox.deliver(to: fresh)
+        XCTAssertTrue(fresh.draftFiles.isEmpty)
+    }
+
+    @MainActor func testSharedBytesQueueIsBoundedAcrossRequests() {
+        let inbox = AttachmentInbox()
+        let file = DraftFile(name: "large", mimeType: "application/octet-stream", data: Data(repeating: 0, count: DraftFile.maximumTotalSize))
+        XCTAssertTrue(inbox.enqueue(files: [file]))
+        XCTAssertFalse(inbox.enqueue(files: [DraftFile(name: "overflow", mimeType: "text/plain", data: Data([1]))]))
+        inbox.removeAll()
+        XCTAssertTrue(inbox.enqueue(files: [file]))
+    }
+
     private func makeFinderFile() throws -> (directory: URL, file: URL) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -349,7 +699,7 @@ final class ChatStoreTests: XCTestCase {
         await store.loadSelectedConversation()
         store.draft = "Keep the current draft"
         store.addFiles([DraftFile(name: "existing.txt", mimeType: "text/plain", data: Data("Existing".utf8))])
-        let inbox = FinderAttachmentInbox()
+        let inbox = AttachmentInbox()
         inbox.enqueue([URL(string: "https://example.com/not-a-file")!, file, file])
         await inbox.deliver(to: store)
         XCTAssertEqual(store.selectedConversationID, "chat")
@@ -368,7 +718,7 @@ final class ChatStoreTests: XCTestCase {
         let service = FakeService()
         let store = ChatStore(service: service)
         store.draft = "A new conversation"
-        let inbox = FinderAttachmentInbox()
+        let inbox = AttachmentInbox()
         inbox.enqueue([file])
         await inbox.deliver(to: store)
         XCTAssertNil(store.selectedConversationID)
@@ -390,7 +740,7 @@ final class ChatStoreTests: XCTestCase {
             })
         }
         while resolver == nil { await Task.yield() }
-        let inbox = FinderAttachmentInbox()
+        let inbox = AttachmentInbox()
         inbox.enqueue([file])
         await inbox.deliver(to: store)
         XCTAssertFalse(inbox.isEmpty)
@@ -410,7 +760,7 @@ final class ChatStoreTests: XCTestCase {
         let expired = ChatStore(service: service)
         await expired.refreshHistory()
         XCTAssertTrue(expired.requiresLogin)
-        let inbox = FinderAttachmentInbox()
+        let inbox = AttachmentInbox()
         inbox.enqueue([file])
         await inbox.deliver(to: expired)
         XCTAssertFalse(inbox.isEmpty)
@@ -635,6 +985,60 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertTrue(service.calls.isEmpty)
         XCTAssertFalse(store.needsReload)
         XCTAssertEqual(store.draftFiles, [file])
+    }
+
+    @MainActor func testNewPrivateChatStartsEmptyAndPreservesOrdinaryAndProjectDrafts() {
+        for context in ["new", "chat", "project"] {
+            let service = FakeService()
+            let store = ChatStore(service: service, conversations: service.history)
+            if context == "chat" { store.select("chat") }
+            if context == "project" { store.selectProject("project") }
+            store.draft = "Keep this draft"
+            let file = DraftFile(name: "kept.txt", mimeType: "text/plain", data: Data("Keep".utf8))
+            store.addFiles([file])
+            store.newPrivateChat()
+            XCTAssertTrue(store.isTemporary)
+            XCTAssertNil(store.selectedConversationID)
+            XCTAssertNil(store.selectedProjectID)
+            XCTAssertNil(store.selectedLeafID)
+            XCTAssertTrue(store.messages.isEmpty)
+            XCTAssertTrue(store.draft.isEmpty)
+            XCTAssertTrue(store.draftFiles.isEmpty)
+            XCTAssertFalse(store.needsReload)
+            XCTAssertTrue(service.calls.isEmpty)
+            if context == "project" { store.selectProject("project") }
+            else if context == "chat" { store.select("chat") }
+            else { store.setTemporary(false) }
+            XCTAssertEqual(store.draft, "Keep this draft")
+            XCTAssertEqual(store.draftFiles, [file])
+        }
+    }
+
+    @MainActor func testNewPrivateChatNeverContinuesPreviousPrivateConversation() async {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        store.newPrivateChat()
+        service.events = [ReplyEvent(conversationID: "private-one", responseID: "answer-one", text: "Done", isFinal: true)]
+        store.draft = "First question"
+        store.send()
+        await store.waitForSend()
+        XCTAssertEqual(store.selectedConversationID, "private-one")
+        store.draft = "Discard private draft"
+        store.addFiles([DraftFile(name: "private.txt", mimeType: "text/plain", data: Data([1]))])
+        store.newPrivateChat()
+        XCTAssertTrue(store.draft.isEmpty)
+        XCTAssertTrue(store.draftFiles.isEmpty)
+        XCTAssertTrue(store.messages.isEmpty)
+        service.events = [ReplyEvent(conversationID: "private-two", responseID: "answer-two", text: "Done", isFinal: true)]
+        store.draft = "Second question"
+        store.send()
+        await store.waitForSend()
+        XCTAssertEqual(service.calls.count, 2)
+        XCTAssertNil(service.calls.last?.0)
+        XCTAssertNil(service.calls.last?.1)
+        XCTAssertEqual(service.calls.last?.4, true)
+        XCTAssertEqual(store.selectedConversationID, "private-two")
+        XCTAssertTrue(store.conversations.isEmpty)
     }
 
     @MainActor func testTemporaryConversationContinuesWithoutHistoryAndNeverAppearsInList() async throws {

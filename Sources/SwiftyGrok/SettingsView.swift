@@ -1,7 +1,6 @@
 import SwiftUI
 import AppKit
 import GrokCore
-import FinderSync
 import GrokUsage
 
 @MainActor struct SettingsView: View {
@@ -125,16 +124,19 @@ import GrokUsage
                     Button(L10n.text("Allow Input Monitoring…")) { screenshotShortcut.requestInputMonitoring() }
                     Text(L10n.text("Input Monitoring is required for the global shortcut. Screen recording access is requested when taking the first screenshot."))
                         .font(.callout).foregroundStyle(.secondary)
+                    PermissionRecoveryHint()
                 }
                 if let error = screenshotShortcut.errorMessage {
                     Text(error).font(.callout).foregroundStyle(.secondary)
                 }
             }
             Section {
-                Button(L10n.text("Configure Finder extension…")) {
-                    FIFinderSyncController.showExtensionManagementInterface()
+                Button(L10n.text("Configure sharing extension…")) {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.ExtensionsPreferences") {
+                        NSWorkspace.shared.open(url)
+                    }
                 }
-                Text(L10n.text("Enable SwiftyGrok in macOS to attach files from Finder's context menu to the open chat or a new draft."))
+                Text(L10n.text("Enable Open in SwiftyGrok in macOS sharing extensions, then use the system Share menu to open public Grok chats or attach files to your open chat or a new draft."))
                     .font(.callout).foregroundStyle(.secondary)
             }
         }
