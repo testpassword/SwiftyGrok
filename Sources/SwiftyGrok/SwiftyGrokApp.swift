@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import GrokCore
+import CoreSpotlight
 
 @main
 @MainActor
@@ -55,6 +56,19 @@ struct SwiftyGrokApp: App {
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(app.store == nil)
             }
+            CommandMenu(L10n.text("Account")) {
+                Button(L10n.text("Refresh session…")) {
+                    app.quickInput.openMain()
+                    app.showLogin = true
+                }
+                .disabled(app.store == nil || app.store?.isSending == true || app.showLogin)
+                Divider()
+                Button(L10n.text("Sign out…")) {
+                    app.quickInput.openMain()
+                    app.confirmSignOut = true
+                }
+                .disabled(app.store == nil || app.store?.isSending == true || app.showLogin)
+            }
         }
     }
 }
@@ -66,10 +80,15 @@ struct SwiftyGrokApp: App {
     private var pendingPublicChatLink: PublicChatLink?
     private var pendingSharedFiles: [SharedFile] = []
     private var pendingWidgetRefresh = false
+    private var pendingSpotlightTarget: ConversationSpotlight.Target?
     private var appearanceObservation: NSKeyValueObservation?
 
     func configure(app: AppModel) {
         self.app = app
+        if let target = pendingSpotlightTarget {
+            pendingSpotlightTarget = nil
+            app.receiveSpotlightConversation(target)
+        }
         quickInput = app.quickInput
         ReplyNotifications.shared.configure { [weak app] id in app?.openReplyNotification(id) }
         WindowScreenshotShortcut.shared.configure { [weak app] in app?.captureWindowScreenshot() }
@@ -88,6 +107,15 @@ struct SwiftyGrokApp: App {
             pendingSharedFiles.removeAll()
             app.receiveSharedFiles(files)
         }
+    }
+
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        guard userActivity.activityType == CSSearchableItemActionType,
+              let identifier = userActivity.userInfo?[CSSearchableItemActivityIdentifier] as? String,
+              let target = ConversationSpotlight.target(for: identifier) else { return false }
+        if let app { app.receiveSpotlightConversation(target) } else { pendingSpotlightTarget = target }
+        return true
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -133,9 +161,8 @@ struct SwiftyGrokApp: App {
         ReplyNotifications.shared.start()
         AppearanceSettings.shared.apply()
         refreshApplicationIcon()
-        for name in [NSWindow.willMiniaturizeNotification, NSWindow.didMiniaturizeNotification] {
-            NotificationCenter.default.addObserver(self, selector: #selector(refreshWindowBadge(_:)), name: name, object: nil)
-        }
+        NotificationCenter.default.addObserver(self, selector: #selector(prepareMinimizedWindow(_:)), name: NSWindow.willMiniaturizeNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(restoreWindowTile(_:)), name: NSWindow.didDeminiaturizeNotification, object: nil)
         // SwiftUI can recreate menus. Restore their custom titles and images
         // both during construction and when a menu opens.
         for name in [NSMenu.didAddItemNotification, NSMenu.didBeginTrackingNotification] {
@@ -178,11 +205,14 @@ struct SwiftyGrokApp: App {
         ApplicationIcon.apply()
     }
 
-    @objc private func refreshWindowBadge(_ notification: Notification) {
+    @objc private func prepareMinimizedWindow(_ notification: Notification) {
         guard let window = notification.object as? NSWindow, !(window is NSPanel) else { return }
-        refreshApplicationIcon()
-        window.dockTile.showsApplicationBadge = true
-        window.dockTile.display()
+        ApplicationIcon.prepareMinimizedWindow(window)
+    }
+
+    @objc private func restoreWindowTile(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, !(window is NSPanel) else { return }
+        window.dockTile.contentView = nil
     }
 }
 
@@ -207,12 +237,18 @@ struct SwiftyGrokApp: App {
             if ready { app.importPendingAttachments() }
         }
         .onChange(of: app.canOpenNotificationConversation, initial: true) { _, ready in
-            if ready { app.openPendingNotificationConversation() }
+            if ready { app.openPendingNotificationConversation(); app.openPendingSpotlightConversation() }
         }
+        .onChange(of: app.store?.conversations) { _, _ in app.refreshSpotlight() }
+        .onChange(of: app.projects?.items) { _, _ in app.refreshSpotlight() }
+        .onChange(of: app.projects?.conversations) { _, _ in app.refreshSpotlight() }
         .onChange(of: app.canOpenPublicChat, initial: true) { _, ready in
             if ready { app.openPendingPublicChat() }
         }
         .sheet(isPresented: $app.showLogin) { LoginView(app: app, canDismiss: true).frame(width: 920, height: 760) }
+        .confirmationDialog(L10n.text("Sign out of Grok? The session will be removed from Keychain."), isPresented: $app.confirmSignOut) {
+            Button(L10n.text("Sign out"), role: .destructive) { app.signOut() }
+        }
         .modifier(CopyFeedbackOverlay())
         .modifier(AppAppearance())
     }

@@ -114,6 +114,7 @@
 "Sign out" = "Выйти";
 "Sign out of Grok? The session will be removed from Keychain." = "Выйти из Grok? Сессия будет удалена из Keychain.";
 "Sign out…" = "Выйти…";
+"Account" = "Учётная запись";
 "Source" = "Источник";
 "Stop response" = "Остановить ответ";
 "The chat or API endpoint was not found. Refresh your history; Grok may have changed its web API." = "Чат или метод API не найден. Обновите историю; Grok мог изменить веб-API.";

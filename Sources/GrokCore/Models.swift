@@ -2,10 +2,12 @@ import Foundation
 
 public struct AccountProfile: Sendable {
     public let name: String?
+    public let email: String?
     public let imageURL: URL?
 
-    public init(name: String?, imageURL: String? = nil) {
+    public init(name: String?, email: String? = nil, imageURL: String? = nil) {
         self.name = name
+        self.email = email
         self.imageURL = imageURL.flatMap { value in
             guard !value.isEmpty else { return nil }
             let base = value.hasPrefix("/rest/") ? "https://grok.com" : "https://assets.grok.com/"

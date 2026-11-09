@@ -1,14 +1,92 @@
 import SwiftUI
 import AppKit
 import GrokCore
+import GrokUsage
 import UniformTypeIdentifiers
+
+@MainActor private struct AccountLimitsPopover: View {
+    let name: String?
+    let email: String?
+    let modes: [ChatMode]
+    @State private var monitor = UsageMonitor.shared
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let snapshot = monitor.snapshots.chat
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(name ?? L10n.text("Profile")).font(.headline).lineLimit(1)
+                    if let email, email.caseInsensitiveCompare(name ?? "") != .orderedSame {
+                        Spacer(minLength: 0)
+                        Text(email).font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle).help(email)
+                    }
+                }
+                Text(UsageText.text("Chat limits")).font(.subheadline.weight(.semibold))
+                if snapshot.fetchedAt == nil {
+                    if monitor.isRefreshing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(UsageText.status(snapshot.status)).font(.callout).foregroundStyle(.secondary)
+                    }
+                } else {
+                    ForEach(["fast", "expert", "heavy"], id: \.self) { id in
+                        let window = snapshot.windows.first(where: { $0.id == id }) ?? UsageWindow(id: id)
+                        let mode = modes.first(where: { $0.id == id }) ?? ChatMode(id: id, name: id.capitalized)
+                        HStack(spacing: 12) {
+                            Image(systemName: mode.symbolName).font(.system(size: 18, weight: .medium))
+                                .frame(width: 38, height: 38)
+                                .background(.primary.opacity(0.07), in: Circle())
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Text(UsageText.text(id.capitalized)).fontWeight(.medium)
+                                    Spacer()
+                                    Text(value(window, at: context.date)).monospacedDigit()
+                                }.font(.callout)
+                                if let percent = window.remainingPercent, !window.hasReset(at: context.date) {
+                                    ProgressView(value: percent, total: 100)
+                                }
+                                if window.hasReset(at: context.date) {
+                                    Text(UsageText.text("Awaiting refresh"))
+                                } else if let reset = window.resetAt {
+                                    Text(UsageText.format("Resets %@", reset.formatted(date: .abbreviated, time: .shortened)))
+                                } else {
+                                    Text(UsageText.text("Reset not reported"))
+                                }
+                            }
+                            .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if snapshot.isStale(at: context.date) {
+                        Text(UsageText.text("Out of date")).font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+            .frame(width: 300, alignment: .leading)
+            .padding(16)
+        }
+        .task {
+            if monitor.snapshots.chat.isStale(at: Date()) { await monitor.refresh() }
+        }
+    }
+
+    private func value(_ window: UsageWindow, at date: Date) -> String {
+        guard !window.hasReset(at: date) else { return "—" }
+        if let remaining = window.remaining { return UsageText.format("Remaining: %@", String(remaining)) }
+        if let percent = window.remainingPercent {
+            return UsageText.format("Remaining: %@%%", percent.formatted(.number.precision(.fractionLength(0))))
+        }
+        return "—"
+    }
+}
 
 @MainActor struct ChatView: View {
     @Bindable var store: ChatStore
     @Bindable var app: AppModel
     @State private var followResponse = true
     @State private var appearance = AppearanceSettings.shared
-    @State private var confirmSignOut = false
+    @State private var showAccountLimits = false
     @State private var chatToRename: ChatSummary?
     @State private var renameTitle = ""
     @State private var showRename = false
@@ -155,9 +233,6 @@ import UniformTypeIdentifiers
         .task(id: store.search) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
             await store.refreshHistory()
-        }
-        .confirmationDialog(L10n.text("Sign out of Grok? The session will be removed from Keychain."), isPresented: $confirmSignOut) {
-            Button(L10n.text("Sign out"), role: .destructive) { app.signOut() }
         }
         .confirmationDialog(L10n.text("Delete project?"), isPresented: $showDeleteProject, titleVisibility: .visible, presenting: projectToDelete) { project in
             Button(L10n.text("Delete"), role: .destructive) {
@@ -427,7 +502,7 @@ import UniformTypeIdentifiers
 
     private func handleHistoryShortcut(_ event: NSEvent) -> Bool {
         guard columnVisibility != .detailOnly, !store.isSending, !store.isContinuingPublicChat, !store.isTemporary, !searchFocused,
-              !showRename, !showDelete, !confirmSignOut, !showCreateProject, projectToRename == nil,
+              !showRename, !showDelete, !app.confirmSignOut, !showCreateProject, projectToRename == nil,
               !showDeleteProject, shareTarget == nil, !app.showLogin,
               let chat = visibleHistoryChats.first(where: { $0.id == store.selectedConversationID }),
               !store.updatingConversations.contains(chat.id) else { return false }
@@ -454,20 +529,16 @@ import UniformTypeIdentifiers
     }
 
     private var accountButton: some View {
-            Menu {
-                    Text(store.accountName ?? L10n.text("Profile"))
-                    Divider()
-                    Button(L10n.text("Refresh session…")) { app.showLogin = true }
-                    Button(L10n.text("Refresh history")) { Task { await store.refreshHistory() } }
-                    Divider()
-                    Button(L10n.text("Sign out…"), role: .destructive) { confirmSignOut = true }
-            } label: {
-                AccountAvatar(url: store.accountImageURL, media: app.media, size: 32)
-                    .padding(4).modifier(FloatingGlass(cornerRadius: 20))
-            }
-            .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
-            .disabled(store.isSending).accessibilityLabel(store.accountName ?? L10n.text("Profile"))
-            .help(store.accountName ?? L10n.text("Profile"))
+        Button { showAccountLimits.toggle() } label: {
+            AccountAvatar(url: store.accountImageURL, media: app.media, size: 32)
+                .padding(4).modifier(FloatingGlass(cornerRadius: 20))
+        }
+        .buttonStyle(.plain).fixedSize()
+        .accessibilityLabel(store.accountName ?? L10n.text("Profile"))
+        .help(store.accountName ?? L10n.text("Profile"))
+        .popover(isPresented: $showAccountLimits, arrowEdge: .bottom) {
+            AccountLimitsPopover(name: store.accountName, email: store.accountEmail, modes: store.modes)
+        }
     }
 
     private var projectsHeader: some View {

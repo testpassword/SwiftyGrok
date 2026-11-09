@@ -51,3 +51,5 @@
 "Widget data could not be saved. Use the complete SwiftyGrok app bundle." = "Не удалось сохранить данные виджетов. Используйте полную сборку приложения SwiftyGrok.";
 "Widgets" = "Виджеты";
 "%@ left" = "Осталось %@";
+"Remaining: %@" = "Осталось: %@";
+"Remaining: %@%%" = "Осталось: %@%%";

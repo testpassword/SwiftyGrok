@@ -155,7 +155,7 @@ import GrokCore
     }
 }
 
-private extension ChatMode {
+extension ChatMode {
     var symbolName: String {
         switch iconHint {
         case "lightning": return "bolt"

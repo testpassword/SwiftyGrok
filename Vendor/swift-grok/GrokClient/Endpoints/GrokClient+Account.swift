@@ -2,6 +2,7 @@ import Foundation
 
 public struct GrokUserProfile: Sendable {
     public let name: String?
+    public let email: String?
     public let imageURL: String?
 }
 
@@ -10,7 +11,7 @@ extension GrokClient {
     /// Authenticated profile used by the Grok account menu.
     public func userProfile() async throws -> GrokUserProfile {
         let json = try await sendJSON(path: "/auth/get-user", method: "GET", namespace: .root)
-        guard let object = json as? [String: Any] else { return GrokUserProfile(name: nil, imageURL: nil) }
+        guard let object = json as? [String: Any] else { return GrokUserProfile(name: nil, email: nil, imageURL: nil) }
         let user = object["user"] as? [String: Any] ?? object
         func value(_ key: String) -> String {
             (user[key] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -18,6 +19,7 @@ extension GrokClient {
         let name = [value("givenName"), value("familyName")].filter { !$0.isEmpty }.joined(separator: " ")
         return GrokUserProfile(
             name: [name, value("displayName"), value("xUsername"), value("email")].first { !$0.isEmpty },
+            email: [value("email")].first { !$0.isEmpty },
             imageURL: [value("profileImageUrl"), value("profileImage")].first { !$0.isEmpty }
         )
     }

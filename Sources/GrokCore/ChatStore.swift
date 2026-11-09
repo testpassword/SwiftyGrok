@@ -27,6 +27,7 @@ public final class ChatStore {
     public private(set) var modes = ChatMode.fallback
     public private(set) var isLoadingModes = false
     public private(set) var accountName: String?
+    public private(set) var accountEmail: String?
     public private(set) var accountImageURL: URL?
     public private(set) var updatingConversations = Set<String>()
     public var modeID = "fast"
@@ -191,6 +192,7 @@ public final class ChatStore {
         fresh.modes = modes
         fresh.modeID = modeID
         fresh.accountName = accountName
+        fresh.accountEmail = accountEmail
         fresh.accountImageURL = accountImageURL
         fresh.temporaryConversationIDs = temporaryConversationIDs
         fresh.projectConversationMetadata = projectConversationMetadata
@@ -278,6 +280,7 @@ public final class ChatStore {
         let generation = sessionGeneration
         if let profile = try? await service.profile(), generation == sessionGeneration, !Task.isCancelled {
             accountName = profile.name
+            accountEmail = profile.email
             accountImageURL = profile.imageURL
         }
     }

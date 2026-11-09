@@ -51,3 +51,5 @@
 "Widget data could not be saved. Use the complete SwiftyGrok app bundle." = "Widget data could not be saved. Use the complete SwiftyGrok app bundle.";
 "Widgets" = "Widgets";
 "%@ left" = "%@ left";
+"Remaining: %@" = "Remaining: %@";
+"Remaining: %@%%" = "Remaining: %@%%";

@@ -120,17 +120,23 @@ enum AppTheme: String, CaseIterable, Identifiable {
 
     static func apply() {
         guard let icon = current else { return }
-        // The minimized-window badge also uses the separately named app image.
-        if NSImage(named: NSImage.applicationIconName) !== icon {
-            NSImage(named: NSImage.applicationIconName)?.setName(nil)
-            icon.setName(NSImage.applicationIconName)
-        }
         NSApp.applicationIconImage = icon
         NSApp.dockTile.display()
         for window in NSApp.windows where !(window is NSPanel) {
-            window.dockTile.showsApplicationBadge = true
+            (window.dockTile.contentView as? MinimizedWindowTile)?.icon = icon
             window.dockTile.display()
         }
+    }
+
+    static func prepareMinimizedWindow(_ window: NSWindow) {
+        guard let icon = current, let view = window.contentView?.superview ?? window.contentView,
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(bitmap)
+        let tile = MinimizedWindowTile(image: image, icon: icon)
+        window.dockTile.contentView = tile
+        window.dockTile.display()
     }
 
     private static func load(_ name: String) -> NSImage? {
@@ -140,6 +146,32 @@ enum AppTheme: String, CaseIterable, Identifiable {
         let bundle = Bundle.main
         #endif
         return bundle.url(forResource: name, withExtension: "icns").flatMap(NSImage.init(contentsOf:))
+    }
+}
+
+private final class MinimizedWindowTile: NSView {
+    private let image: NSImage
+    var icon: NSImage { didSet { needsDisplay = true } }
+
+    init(image: NSImage, icon: NSImage) {
+        self.image = image
+        self.icon = icon
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard bounds.width > 0, bounds.height > 0, image.size.width > 0, image.size.height > 0 else { return }
+        let scale = min(bounds.width / image.size.width, bounds.height / image.size.height)
+        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        let rect = NSRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2,
+                          width: size.width, height: size.height)
+        image.draw(in: rect)
+        let badgeSize = min(bounds.width, bounds.height) * 0.36
+        icon.draw(in: NSRect(x: bounds.maxX - badgeSize, y: bounds.minY,
+                             width: badgeSize, height: badgeSize))
     }
 }
 

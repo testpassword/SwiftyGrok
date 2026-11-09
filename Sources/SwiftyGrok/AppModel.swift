@@ -1,6 +1,8 @@
 import Foundation
 import Observation
 import GrokCore
+import CoreSpotlight
+import UniformTypeIdentifiers
 
 @MainActor @Observable
 final class AppModel {
@@ -9,6 +11,7 @@ final class AppModel {
     private(set) var isRestoring = true
     private(set) var isConnecting = false
     var showLogin = false
+    var confirmSignOut = false
     var loginError: String?
     private(set) var browser = LoginBrowser()
     @ObservationIgnored let quickInput = QuickInputController()
@@ -24,6 +27,9 @@ final class AppModel {
     @ObservationIgnored private var pendingNotificationConversationID: String?
     @ObservationIgnored private var pendingPublicChatLink: PublicChatLink?
     @ObservationIgnored private let replyNotifications = ReplyNotifications.shared
+    @ObservationIgnored private let spotlight = ConversationSpotlight()
+    @ObservationIgnored private var spotlightService: GrokService?
+    private var pendingSpotlightConversation: ConversationSpotlight.Target?
 
     var canOpenNotificationConversation: Bool {
         canOpenPublicChat
@@ -63,6 +69,24 @@ final class AppModel {
         store.select(id)
     }
 
+    func receiveSpotlightConversation(_ target: ConversationSpotlight.Target) {
+        pendingSpotlightConversation = target
+        quickInput.hide()
+        quickInput.openMain()
+        if store?.requiresLogin == true { showLogin = true }
+        openPendingSpotlightConversation()
+    }
+
+    func openPendingSpotlightConversation() {
+        guard canOpenPublicChat, let target = pendingSpotlightConversation, let store else { return }
+        pendingSpotlightConversation = nil
+        store.select(target.id, projectID: target.projectID)
+    }
+
+    func refreshSpotlight() {
+        if let spotlightService { spotlight.refresh(using: spotlightService) }
+    }
+
     private func configureStoreCallbacks(for store: ChatStore) {
         store.onConversationUpdated = { [weak self] chat in self?.projects?.updateConversation(chat) }
         store.onConversationDeleted = { [weak self] id in self?.projects?.removeConversation(id: id) }
@@ -70,6 +94,7 @@ final class AppModel {
         store.onSendStarted = { [weak self] in self?.replyNotifications.prepareAuthorization() }
         store.onReplyCompleted = { [weak self] reply in
             self?.replyNotifications.show(reply)
+            self?.refreshSpotlight()
             Task { await UsageMonitor.shared.refresh() }
         }
     }
@@ -201,8 +226,12 @@ final class AppModel {
         if persist {
             replyNotifications.reset()
             pendingNotificationConversationID = nil
+            pendingSpotlightConversation = nil
+            spotlight.clear()
         }
         stopConversations()
+        spotlightService = service
+        spotlight.refresh(using: service)
         media = MessageMediaLoader(credentials: credentials)
         store = ChatStore(service: service, conversations: history.items, nextPageToken: history.nextPageToken)
         projects = ProjectStore(service: service)
@@ -219,6 +248,9 @@ final class AppModel {
             attachmentInbox.removeAll()
             replyNotifications.reset()
             pendingNotificationConversationID = nil
+            pendingSpotlightConversation = nil
+            spotlightService = nil
+            spotlight.clear()
             generation = UUID()
             pendingPublicChatLink = nil
             stopConversations()
@@ -255,5 +287,85 @@ final class AppModel {
         store?.shutdown()
         retiringStores.forEach { $0.shutdown() }
         retiringStores = []
+    }
+}
+
+@MainActor
+final class ConversationSpotlight {
+    struct Target: Codable {
+        let id: String
+        let projectID: String?
+    }
+
+    private let index = CSSearchableIndex.default()
+    private let domain = "app.swiftygrok.conversations"
+    private var scan: Task<Void, Never>?
+    private var write: Task<Void, Never>?
+    private var generation = UUID()
+
+    static func target(for identifier: String) -> Target? {
+        guard let data = Data(base64Encoded: identifier),
+              let target = try? JSONDecoder().decode(Target.self, from: data), !target.id.isEmpty else { return nil }
+        return target
+    }
+
+    func refresh(using service: GrokService) {
+        scan?.cancel()
+        let current = UUID()
+        generation = current
+        scan = Task {
+            do {
+                try await Task.sleep(for: .seconds(1))
+                var entries: [(ChatSummary, String?)] = []
+                func collect(projectID: String?) async throws {
+                    var token: String?
+                    var seen = Set<String>()
+                    repeat {
+                        try Task.checkCancellation()
+                        let page: HistoryPage
+                        if let projectID {
+                            page = try await service.projectConversations(id: projectID, pageToken: token)
+                        } else {
+                            page = try await service.history(pageToken: token, search: "")
+                        }
+                        entries += page.items.map { ($0, projectID) }
+                        token = page.nextPageToken
+                        if let token, !seen.insert(token).inserted { throw CancellationError() }
+                    } while token != nil
+                }
+                try await collect(projectID: nil)
+                for project in try await service.projects() { try await collect(projectID: project.id) }
+                try Task.checkCancellation()
+                guard current == generation else { return }
+                let items = entries.compactMap { chat, projectID -> CSSearchableItem? in
+                    guard !chat.id.isEmpty,
+                          let data = try? JSONEncoder().encode(Target(id: chat.id, projectID: projectID)) else { return nil }
+                    let attributes = CSSearchableItemAttributeSet(contentType: .text)
+                    attributes.title = chat.title
+                    attributes.contentModificationDate = chat.modifiedAt
+                    return CSSearchableItem(uniqueIdentifier: data.base64EncodedString(), domainIdentifier: domain, attributeSet: attributes)
+                }
+                enqueue(items, generation: current)
+            } catch { /* Keep the previous index if history could not be loaded completely. */ }
+        }
+    }
+
+    func clear() {
+        scan?.cancel()
+        generation = UUID()
+        enqueue([], generation: generation, forceClear: true)
+    }
+
+    private func enqueue(_ items: [CSSearchableItem], generation current: UUID, forceClear: Bool = false) {
+        let previous = write
+        write = Task {
+            await previous?.value
+            guard forceClear || current == generation else { return }
+            do {
+                try await index.deleteSearchableItems(withDomainIdentifiers: [domain])
+                guard current == generation, !items.isEmpty else { return }
+                try await index.indexSearchableItems(items)
+            } catch { NSLog("Spotlight indexing failed: %@", error.localizedDescription) }
+        }
     }
 }

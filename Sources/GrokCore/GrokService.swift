@@ -124,7 +124,7 @@ public final class GrokService: GrokServing, ProjectServing {
 
     public func profile() async throws -> AccountProfile {
         let profile = try await client.userProfile()
-        return AccountProfile(name: profile.name, imageURL: profile.imageURL)
+        return AccountProfile(name: profile.name, email: profile.email, imageURL: profile.imageURL)
     }
 
     public func renameConversation(id: String, title: String) async throws {
