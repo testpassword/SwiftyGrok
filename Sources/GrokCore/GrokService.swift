@@ -23,7 +23,7 @@ public protocol GrokServing: AnyObject {
 }
 
 @MainActor
-public final class GrokService: GrokServing, ProjectServing {
+public final class GrokService: GrokServing, ProjectServing, SharedConversationServing {
     private let client: GrokClient
     private var assetCache: [String: MessageAttachment] = [:]
 
@@ -141,6 +141,25 @@ public final class GrokService: GrokServing, ProjectServing {
 
     public func shareConversation(id: String, responseID: String) async throws -> URL {
         try await client.publicConversationURL(conversationId: id, responseId: responseID)
+    }
+
+    public func sharedConversations(pageToken: String?) async throws -> SharedConversationPage {
+        let page = try await client.ownedShareLinks(pageToken: pageToken)
+        let items = page.shareLinks.compactMap { link -> SharedConversation? in
+            guard link.isPublic == true, !link.shareLinkId.isEmpty else { return nil }
+            let token = link.publicId.flatMap { $0.isEmpty ? nil : $0 } ?? link.shareLinkId
+            var parts = URLComponents()
+            parts.scheme = "https"; parts.host = "grok.com"; parts.path = "/share/\(token)"
+            let url = parts.url.flatMap { PublicChatLink(url: $0)?.url }
+            return SharedConversation(id: link.shareLinkId, conversationID: link.conversationId,
+                title: link.title ?? L10n.text("Untitled"), url: url, views: link.viewCount,
+                createdAt: GrokDate.parse(link.createTime ?? ""))
+        }
+        return SharedConversationPage(items: items, nextPageToken: page.nextPageToken)
+    }
+
+    public func revokeSharedConversation(id: String) async throws {
+        try await client.revokeShareLink(id: id)
     }
 
     public func publicChat(_ link: PublicChatLink) async throws -> PublicChat {

@@ -1,6 +1,60 @@
 import Foundation
 
 extension GrokClient {
+    public struct OwnedShareLinkPage: Decodable {
+        public let shareLinks: [OwnedShareLink]
+        public let nextPageToken: String?
+        private enum CodingKeys: String, CodingKey { case shareLinks, nextPageToken }
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            shareLinks = try values.decodeIfPresent([OwnedShareLink].self, forKey: .shareLinks) ?? []
+            nextPageToken = try values.decodeIfPresent(String.self, forKey: .nextPageToken)
+        }
+    }
+
+    /// Decode only management metadata, never retain the shared response bodies.
+    public struct OwnedShareLink: Decodable {
+        public let shareLinkId: String
+        public let conversationId: String?
+        public let publicId: String?
+        public let isPublic: Bool?
+        public let createTime: String?
+        public let title: String?
+        public let viewCount: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case shareLinkId, conversationId, publicId, isPublic, createTime, sharedLink, viewCount
+        }
+        private struct SharedMetadata: Decodable {
+            struct Title: Decodable { let title: String? }
+            let conversation: Title?
+        }
+        public init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            shareLinkId = try values.decode(String.self, forKey: .shareLinkId)
+            conversationId = try values.decodeIfPresent(String.self, forKey: .conversationId)
+            publicId = try values.decodeIfPresent(String.self, forKey: .publicId)
+            isPublic = try values.decodeIfPresent(Bool.self, forKey: .isPublic)
+            createTime = try values.decodeIfPresent(String.self, forKey: .createTime)
+            title = try values.decodeIfPresent(SharedMetadata.self, forKey: .sharedLink)?.conversation?.title
+            let count = (try? values.decode(Int.self, forKey: .viewCount))
+                ?? (try? values.decode(String.self, forKey: .viewCount)).flatMap(Int.init)
+            viewCount = count.flatMap { $0 >= 0 ? $0 : nil }
+        }
+    }
+
+    public func ownedShareLinks(pageToken: String? = nil) async throws -> OwnedShareLinkPage {
+        var query = [URLQueryItem(name: "pageSize", value: "100"),
+                     URLQueryItem(name: "sharedWithMe", value: "false"),
+                     URLQueryItem(name: "orderBy", value: "LIST_SHARE_LINKS_ORDER_BY_CREATE_TIME")]
+        if let pageToken, !pageToken.isEmpty { query.append(URLQueryItem(name: "pageToken", value: pageToken)) }
+        return try await decodeJSON(path: endpointPath(["share_links"], queryItems: query), method: "GET")
+    }
+
+    public func revokeShareLink(id: String) async throws {
+        try await sendVoid(path: endpointPath(["share_links", id], queryItems: []), method: "DELETE")
+    }
+
     private typealias JSONDictionary = [String: Any]
 
     private static let sharingWrapperKeys = [

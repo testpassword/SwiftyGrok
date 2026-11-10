@@ -85,7 +85,7 @@ struct ConversationShareTarget: Identifiable {
             .background(hovered ? Color.primary.opacity(0.06) : .clear,
                         in: RoundedRectangle(cornerRadius: 10))
         }
-        .buttonStyle(.plain)
+        .modifier(SharingGlassButtons())
         .onHover { hovered = $0 }
     }
 }

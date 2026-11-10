@@ -27,12 +27,12 @@ struct SwiftyGrokApp: App {
                     Label(L10n.text("Settings…"), systemImage: "gearshape")
                 }
                 .keyboardShortcut(",", modifiers: .command)
-                .disabled(app.showLogin)
+                .disabled(app.showLogin || app.sharedConversations != nil)
             }
             CommandGroup(replacing: .newItem) {
                 Button(L10n.text("New chat")) { app.store?.newChat(); app.quickInput.openMain() }
                     .keyboardShortcut("n", modifiers: .command)
-                    .disabled(app.store == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true)
+                    .disabled(app.store == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true || app.sharedConversations != nil)
                 Button(L10n.text("New private chat")) {
                     guard let store = app.store else { return }
                     store.newPrivateChat()
@@ -40,34 +40,39 @@ struct SwiftyGrokApp: App {
                     app.quickInput.openMain()
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
-                .disabled(app.store == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true || app.store?.updatingConversations.isEmpty == false || app.showLogin)
+                .disabled(app.store == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true || app.store?.updatingConversations.isEmpty == false || app.showLogin || app.sharedConversations != nil)
             }
             CommandGroup(after: .textEditing) {
                 Button(L10n.text("Search chats")) { searchChats?() }
                     .keyboardShortcut("f", modifiers: .command)
-                    .disabled(searchChats == nil || app.showLogin)
+                    .disabled(searchChats == nil || app.showLogin || app.sharedConversations != nil)
             }
             CommandGroup(after: .newItem) {
+                Button { app.openSharedConversations() } label: {
+                    Label(L10n.text("Shared conversations"), systemImage: "link")
+                }
+                .disabled(app.store == nil || app.showLogin || app.isConnecting || app.sharedConversations != nil)
+                Divider()
                 if let error = app.quickInput.shortcutError { Text(error) }
                 Button(L10n.text("Refresh chat")) { Task { await app.store?.loadSelectedConversation() } }
                     .keyboardShortcut("r", modifiers: .command)
-                    .disabled(app.store?.selectionID == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true)
+                    .disabled(app.store?.selectionID == nil || app.store?.isSending == true || app.store?.isContinuingPublicChat == true || app.sharedConversations != nil)
                 Button(L10n.text("Refresh history")) { Task { await app.store?.refreshHistory() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
-                    .disabled(app.store == nil)
+                    .disabled(app.store == nil || app.sharedConversations != nil)
             }
             CommandMenu(L10n.text("Account")) {
                 Button(L10n.text("Refresh session…")) {
                     app.quickInput.openMain()
                     app.showLogin = true
                 }
-                .disabled(app.store == nil || app.store?.isSending == true || app.showLogin)
+                .disabled(app.store == nil || app.store?.isSending == true || app.showLogin || app.sharedConversations != nil)
                 Divider()
                 Button(L10n.text("Sign out…")) {
                     app.quickInput.openMain()
                     app.confirmSignOut = true
                 }
-                .disabled(app.store == nil || app.store?.isSending == true || app.showLogin)
+                .disabled(app.store == nil || app.store?.isSending == true || app.showLogin || app.sharedConversations != nil)
             }
         }
     }

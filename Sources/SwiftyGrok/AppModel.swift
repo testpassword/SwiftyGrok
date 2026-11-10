@@ -12,10 +12,12 @@ final class AppModel {
     private(set) var isConnecting = false
     var showLogin = false
     var confirmSignOut = false
+    private(set) var sharedConversations: SharedConversationStore?
     var loginError: String?
     private(set) var browser = LoginBrowser()
     @ObservationIgnored let quickInput = QuickInputController()
     @ObservationIgnored private var settingsWindow: SettingsWindowController?
+    @ObservationIgnored private var sharedConversationsWindow: SharedConversationsWindowController?
     @ObservationIgnored private var retiringStores: [ChatStore] = []
     @ObservationIgnored private let keychain = KeychainStore()
     @ObservationIgnored private(set) var media: MessageMediaLoader?
@@ -28,7 +30,7 @@ final class AppModel {
     @ObservationIgnored private var pendingPublicChatLink: PublicChatLink?
     @ObservationIgnored private let replyNotifications = ReplyNotifications.shared
     @ObservationIgnored private let spotlight = ConversationSpotlight()
-    @ObservationIgnored private var spotlightService: GrokService?
+    @ObservationIgnored private var sessionService: GrokService?
     private var pendingSpotlightConversation: ConversationSpotlight.Target?
 
     var canOpenNotificationConversation: Bool {
@@ -36,7 +38,7 @@ final class AppModel {
     }
 
     var canOpenPublicChat: Bool {
-        !isRestoring && !isConnecting && !showLogin && store?.requiresLogin == false &&
+        !isRestoring && !isConnecting && !showLogin && sharedConversations == nil && store?.requiresLogin == false &&
         store?.isSending == false && store?.isReadingFiles == false && store?.isDictating == false &&
         store?.isContinuingPublicChat == false && store?.updatingConversations.isEmpty == true
     }
@@ -84,7 +86,23 @@ final class AppModel {
     }
 
     func refreshSpotlight() {
-        if let spotlightService { spotlight.refresh(using: spotlightService) }
+        if let sessionService { spotlight.refresh(using: sessionService) }
+    }
+
+    func openSharedConversations() {
+        guard !isRestoring, !isConnecting, !showLogin, sharedConversations == nil, let sessionService else { return }
+        quickInput.hide()
+        quickInput.openMain()
+        let store = SharedConversationStore(service: sessionService)
+        let controller = SharedConversationsWindowController(store: store)
+        sharedConversations = store
+        sharedConversationsWindow = controller
+        defer {
+            store.shutdown()
+            if sharedConversations === store { sharedConversations = nil }
+            if sharedConversationsWindow === controller { sharedConversationsWindow = nil }
+        }
+        controller.show()
     }
 
     private func configureStoreCallbacks(for store: ChatStore) {
@@ -100,7 +118,7 @@ final class AppModel {
     }
 
     var canImportAttachments: Bool {
-        !isRestoring && !isConnecting && !showLogin && store?.requiresLogin == false && store?.canAttachFiles == true
+        !isRestoring && !isConnecting && !showLogin && sharedConversations == nil && store?.requiresLogin == false && store?.canAttachFiles == true
     }
 
     func receiveFiles(_ urls: [URL]) {
@@ -230,7 +248,7 @@ final class AppModel {
             spotlight.clear()
         }
         stopConversations()
-        spotlightService = service
+        sessionService = service
         spotlight.refresh(using: service)
         media = MessageMediaLoader(credentials: credentials)
         store = ChatStore(service: service, conversations: history.items, nextPageToken: history.nextPageToken)
@@ -249,7 +267,7 @@ final class AppModel {
             replyNotifications.reset()
             pendingNotificationConversationID = nil
             pendingSpotlightConversation = nil
-            spotlightService = nil
+            sessionService = nil
             spotlight.clear()
             generation = UUID()
             pendingPublicChatLink = nil
@@ -280,6 +298,10 @@ final class AppModel {
     }
 
     private func stopConversations() {
+        sharedConversationsWindow?.close()
+        sharedConversationsWindow = nil
+        sharedConversations?.shutdown()
+        sharedConversations = nil
         screenshotTask?.cancel()
         projects?.shutdown()
         projects = nil

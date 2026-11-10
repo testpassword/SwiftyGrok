@@ -69,6 +69,7 @@ import GrokCore
     func show() {
         guard BehaviorSettings.shared.quickInputEnabled else { return }
         guard NSApp.modalWindow == nil else { openMain(); return }
+        guard app?.sharedConversations == nil else { openMain(); return }
         guard let mainStore = app?.store, !mainStore.requiresLogin else { openMain(); return }
         if draftStore == nil { draftStore = mainStore.makeNewConversationStore() }
         guard let draftStore else { return }

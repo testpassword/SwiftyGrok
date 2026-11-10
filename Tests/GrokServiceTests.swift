@@ -37,6 +37,48 @@ private final class FixtureProtocol: URLProtocol {
 }
 
 final class GrokServiceTests: XCTestCase {
+    @MainActor func testOwnedSharedConversationsKeepPublicTokenSeparateFromManagementID() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/rest/app-chat/share_links")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "sharedWithMe" }?.value, "false")
+            XCTAssertEqual(query.first { $0.name == "pageToken" }?.value, "cursor +/?")
+            XCTAssertEqual(query.first { $0.name == "orderBy" }?.value, "LIST_SHARE_LINKS_ORDER_BY_CREATE_TIME")
+            return (200, Data(#"{"shareLinks":[{"shareLinkId":"management-one","publicId":"public-one","conversationId":"original-chat","isPublic":true,"viewCount":"12","createTime":"2026-01-01T12:00:00Z","sharedLink":{"conversation":{"title":"Published title"},"responses":"ignored payload"}},{"shareLinkId":"team-only","isPublic":false},{"shareLinkId":"legacy-public","isPublic":true,"viewCount":0},{"shareLinkId":"unknown-stats","isPublic":true,"viewCount":-2}],"nextPageToken":"next"}"#.utf8))
+        }
+        let page = try await service().sharedConversations(pageToken: "cursor +/?")
+        XCTAssertEqual(page.items.count, 3)
+        XCTAssertEqual(page.nextPageToken, "next")
+        XCTAssertEqual(page.items[0].id, "management-one")
+        XCTAssertEqual(page.items[0].conversationID, "original-chat")
+        XCTAssertEqual(page.items[0].url?.absoluteString, "https://grok.com/share/public-one")
+        XCTAssertEqual(page.items[0].title, "Published title")
+        XCTAssertEqual(page.items[0].views, 12)
+        XCTAssertNotNil(page.items[0].createdAt)
+        XCTAssertEqual(page.items[1].views, 0)
+        XCTAssertEqual(page.items[1].url?.lastPathComponent, "legacy-public")
+        XCTAssertNil(page.items[2].views)
+    }
+
+    @MainActor func testEmptySharedListDoesNotNeedRepeatedFieldInJSON() async throws {
+        FixtureProtocol.handler = { _ in (200, Data("{}".utf8)) }
+        let page = try await service().sharedConversations(pageToken: nil)
+        XCTAssertTrue(page.items.isEmpty)
+        XCTAssertNil(page.nextPageToken)
+    }
+
+    @MainActor func testRevocationUsesOnlyShareEndpointAndEncodesManagementID() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.percentEncodedPath,
+                           "/rest/app-chat/share_links/management%2Fid%3Fscope=all")
+            XCTAssertNil(request.httpBody)
+            return (204, Data())
+        }
+        try await service().revokeSharedConversation(id: "management/id?scope=all")
+    }
+
     @MainActor func testPublicSnapshotUsesShareEndpointAndNeverFetchesOriginalPrivateNodes() async throws {
         var calls = 0
         FixtureProtocol.handler = { request in
