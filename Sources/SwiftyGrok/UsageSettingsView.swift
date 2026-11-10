@@ -11,7 +11,7 @@ import GrokUsage
                 Text(UsageText.text("Keep SwiftyGrok running to update widgets. Updates are requested every five minutes; macOS controls when widgets refresh."))
                     .font(.callout).foregroundStyle(.secondary)
                 Button {
-                    Task { await monitor.refresh() }
+                    Task { await monitor.refreshWidgets() }
                 } label: {
                     Label(UsageText.text("Refresh widgets"), systemImage: "arrow.clockwise")
                 }

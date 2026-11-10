@@ -8,8 +8,8 @@
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleLocalizations</key><array><string>en</string><string>ru</string></array>
     <key>CFBundlePackageType</key><string>XPC!</string>
-    <key>CFBundleShortVersionString</key><string>1.4.1</string>
-    <key>CFBundleVersion</key><string>78</string>
+    <key>CFBundleShortVersionString</key><string>1.4.2</string>
+    <key>CFBundleVersion</key><string>81</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSExtension</key><dict><key>NSExtensionPointIdentifier</key><string>com.apple.widgetkit-extension</string></dict>
 </dict></plist>

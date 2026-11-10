@@ -177,7 +177,7 @@ final class AppModel {
     func openWidgetSettings() {
         quickInput.hide()
         if settingsWindow == nil { settingsWindow = SettingsWindowController() }
-        Task { await UsageMonitor.shared.refresh() }
+        Task { await UsageMonitor.shared.refreshWidgets() }
         settingsWindow?.showWidgets()
     }
 

@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 import Observation
 import WidgetKit
+import CoreServices
+import OSLog
 import GrokCore
 import GrokUsage
 
@@ -17,11 +19,13 @@ import GrokUsage
     @ObservationIgnored private var buildGeneration = UUID()
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var refreshAgain = false
+    @ObservationIgnored private var registrationTask: Task<Bool, Never>?
     @ObservationIgnored private let buildClient = BuildUsageClient()
 
     func start() {
         guard timer == nil else { return }
         timer = Task { [weak self] in
+            await self?.registerWidgets()
             while !Task.isCancelled {
                 await self?.refresh()
                 do { try await Task.sleep(for: .seconds(300)) } catch { return }
@@ -30,6 +34,22 @@ import GrokUsage
     }
 
     func stop() { timer?.cancel(); timer = nil }
+
+    /// Explicit refresh can also recover a stale extension process left behind
+    /// by an app replacement. The five-minute polling loop only fetches data.
+    func refreshWidgets() async {
+        await registerWidgets(force: true)
+        await refresh()
+    }
+
+    private func registerWidgets(force: Bool = false) async {
+        if let registrationTask { _ = await registrationTask.value; return }
+        let task = Task.detached(priority: .utility) { WidgetRegistration.repairIfNeeded(force: force) }
+        registrationTask = task
+        let repaired = await task.value
+        registrationTask = nil
+        if repaired && !Task.isCancelled { WidgetCenter.shared.reloadAllTimelines() }
+    }
 
     func setChatService(_ service: GrokService?) {
         chatGeneration = UUID()
@@ -143,5 +163,57 @@ import GrokUsage
                 WidgetCenter.shared.reloadTimelines(ofKind: kind)
             }
         } catch { storageFailed = true }
+    }
+}
+
+/// WidgetKit rejects timelines from a surviving old executable after an app
+/// update ("Bundle version did not match"). Refresh only our registration and
+/// stop only our user-owned extension; leave widgets, containers and OS caches intact.
+private enum WidgetRegistration {
+    private static let markerKey = "widgets.registeredBundleVersion"
+    private static let logger = Logger(subsystem: "app.swiftygrok.native", category: "Widgets")
+
+    static func repairIfNeeded(force: Bool) -> Bool {
+        let app = Bundle.main
+        let extensionURL = app.bundleURL.appendingPathComponent("Contents/PlugIns/SwiftyGrokWidgets.appex")
+        guard app.bundleURL.pathExtension == "app",
+              let widget = Bundle(url: extensionURL), widget.bundleIdentifier == UsageSnapshotStore.extensionIdentifier,
+              let version = app.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              let build = app.object(forInfoDictionaryKey: "CFBundleVersion") as? String,
+              widget.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String == version,
+              widget.object(forInfoDictionaryKey: "CFBundleVersion") as? String == build else { return false }
+        let marker = "\(app.bundleURL.absoluteString)|\(version)|\(build)"
+        let defaults = UserDefaults.standard
+        guard force || defaults.string(forKey: markerKey) != marker else { return false }
+        guard LSRegisterURL(app.bundleURL as CFURL, true) == noErr else {
+            logger.error("Could not refresh SwiftyGrok's LaunchServices registration.")
+            return false
+        }
+        do {
+            // The old executable may have been removed during replacement, so
+            // proc_pidpath cannot reliably identify it. Match our exact private
+            // executable name and current UID, never a system WidgetKit process.
+            try run("/usr/bin/pkill", ["-x", "-u", String(getuid()), "SwiftyGrokWidgets"], allowed: [0, 1])
+            try run("/usr/bin/pluginkit", ["-a", extensionURL.path])
+            defaults.set(marker, forKey: markerKey)
+            logger.info("Refreshed SwiftyGrok widget registration after an update or explicit refresh.")
+            return true
+        } catch {
+            logger.error("Could not refresh SwiftyGrok's widget extension registration.")
+            return false
+        }
+    }
+
+    private static func run(_ executable: String, _ arguments: [String], allowed: Set<Int32> = [0]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationReason == .exit, allowed.contains(process.terminationStatus) else {
+            throw CocoaError(.executableRuntimeMismatch)
+        }
     }
 }

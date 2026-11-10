@@ -172,7 +172,7 @@ import GrokUsage
 }
 
 @MainActor private enum SettingsWindowLayout {
-    static let standardStyle: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
+    static let standardStyle: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
     // Preserve the previous outer size while extending content under the title bar.
     static let size = NSWindow.frameRect(forContentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
                                          styleMask: standardStyle).size
@@ -196,7 +196,7 @@ import GrokUsage
         window.isReleasedWhenClosed = false
         window.tabbingMode = .disallowed
         window.collectionBehavior = [.fullScreenNone]
-        window.contentViewController = NSHostingController(rootView: SettingsView())
+        window.contentViewController = Self.makeContentController()
         window.toolbar = nil
         // Use outer-frame sizing consistently with fullSizeContentView.
         window.minSize = size
@@ -213,6 +213,7 @@ import GrokUsage
 
     func show() {
         guard let window else { return }
+        restoreFixedSize()
         configureButtons()
         showWindow(nil)
         window.makeKeyAndOrderFront(nil)
@@ -232,8 +233,29 @@ import GrokUsage
     }
 
     func showWidgets() {
-        window?.contentViewController = NSHostingController(rootView: SettingsView(showWidgets: true))
+        window?.contentViewController = Self.makeContentController(showWidgets: true)
         show()
+    }
+
+    private static func makeContentController(showWidgets: Bool = false) -> NSHostingController<SettingsView> {
+        let controller = NSHostingController(rootView: SettingsView(showWidgets: showWidgets))
+        // The window owns its fixed size. SwiftUI's default standardBounds
+        // would replace contentMinSize/contentMaxSize during later layout passes.
+        controller.sizingOptions = []
+        return controller
+    }
+
+    private func restoreFixedSize() {
+        guard let window else { return }
+        let size = SettingsWindowLayout.size
+        window.minSize = size
+        window.maxSize = size
+        guard window.frame.size != size else { return }
+        var frame = window.frame
+        // Keep the window's top-left position when restoring its dimensions.
+        frame.origin.y += frame.height - size.height
+        frame.size = size
+        window.setFrame(frame, display: false)
     }
 
     private func configureButtons() {
