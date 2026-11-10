@@ -37,6 +37,44 @@ private final class FixtureProtocol: URLProtocol {
 }
 
 final class GrokServiceTests: XCTestCase {
+    @MainActor func testPlaceCardsAreHydratedAndCachedWithoutChangingThreadTopology() async throws {
+        FixtureProtocol.handler = placeThreadFixture
+        let places = StubPlaceHistory()
+        let client = try service(placeHistory: places)
+        let first = try await client.thread(id: "chat")
+        let second = try await client.thread(id: "chat")
+        XCTAssertEqual(places.calls, [["answer"]])
+        let answer = try XCTUnwrap(try first.path().last)
+        XCTAssertEqual(answer.parentID, "question")
+        XCTAssertEqual(answer.placeBlocks.count, 3)
+        XCTAssertFalse(answer.placesUnavailable)
+        XCTAssertEqual(try second.path().last?.placeBlocks, answer.placeBlocks)
+    }
+
+    @MainActor func testPlaceFailureKeepsTextAndCanBeRetried() async throws {
+        FixtureProtocol.handler = placeThreadFixture
+        let places = StubPlaceHistory(); places.failure = URLError(.notConnectedToInternet)
+        let client = try service(placeHistory: places)
+        let first = try await client.thread(id: "chat")
+        let answer = try XCTUnwrap(try first.path().last)
+        XCTAssertEqual(answer.text, "Before\n\nAfter")
+        XCTAssertTrue(answer.placesUnavailable)
+        XCTAssertTrue(answer.placeBlocks.isEmpty)
+        places.failure = nil
+        let second = try await client.thread(id: "chat")
+        XCTAssertFalse(try second.path().last!.placesUnavailable)
+        XCTAssertFalse(try second.path().last!.placeBlocks.isEmpty)
+        XCTAssertEqual(places.calls.count, 2)
+    }
+
+    private func placeThreadFixture(_ request: URLRequest) throws -> (Int, Data) {
+        if request.url!.path.hasSuffix("response-node") {
+            return (200, Data(#"{"responseNodes":[{"responseId":"question","sender":"human"},{"responseId":"answer","sender":"assistant","parentResponseId":"question"}]}"#.utf8))
+        }
+        XCTAssertTrue(request.url!.path.hasSuffix("load-responses"))
+        return (200, Data(#"{"responses":[{"responseId":"question","sender":"human","message":"Parks"},{"responseId":"answer","parentResponseId":"question","sender":"assistant","message":"Before\n\nAfter","steps":[{"toolUsageCards":[{"mcp":{"toolName":"places_search"}}]}]}]}"#.utf8))
+    }
+
     @MainActor func testOwnedSharedConversationsKeepPublicTokenSeparateFromManagementID() async throws {
         FixtureProtocol.handler = { request in
             XCTAssertEqual(request.httpMethod, "GET")
@@ -537,10 +575,10 @@ final class GrokServiceTests: XCTestCase {
         XCTAssertEqual(calls, 3)
     }
 
-    @MainActor private func service() throws -> GrokService {
+    @MainActor private func service(placeHistory: (any PlaceHistoryLoading)? = nil) throws -> GrokService {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureProtocol.self]
-        return try GrokService(credentials: SessionCredentials(cookies: ["sso": "fixture"], userAgent: "FixtureBrowser/1"), session: URLSession(configuration: config))
+        return try GrokService(credentials: SessionCredentials(cookies: ["sso": "fixture"], userAgent: "FixtureBrowser/1"), session: URLSession(configuration: config), placeHistory: placeHistory)
     }
 
     @MainActor func testHistoryUsesActualEndpointCookieAndSearch() async throws {

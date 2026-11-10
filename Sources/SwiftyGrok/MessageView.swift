@@ -8,6 +8,7 @@ import GrokCore
     let isThinking: Bool
     let media: MessageMediaLoader?
     let conversationURL: URL?
+    var retryPlaces: (() -> Void)? = nil
     private let sourceIconSize: CGFloat = 14
     private let sourceFont = Font.system(size: 12)
     @State private var appearance = AppearanceSettings.shared
@@ -47,17 +48,24 @@ import GrokCore
                     } else if message.reasoningDuration != nil {
                         Text(reasoningTitle).font(.callout).foregroundStyle(.secondary)
                     }
-                    if message.text.isEmpty && message.attachments.isEmpty && message.failure == nil {
+                    if message.text.isEmpty && message.attachments.isEmpty && message.placeBlocks.isEmpty && message.failure == nil {
                         HStack(spacing: 8) {
                             if isThinking { ProgressView().controlSize(.small) }
                             Text(isStreaming ? (isThinking ? L10n.text("Grok is thinking…") : L10n.text("Waiting for a response…")) : L10n.text("No response text received"))
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                     } else {
-                        MarkdownMessage(text: message.displayMarkdown, media: media)
+                        answerBody
                         if isThinking { Text(L10n.text("Grok is thinking…")).font(.caption).foregroundStyle(.secondary) }
                     }
                     attachments
+                    if message.placesUnavailable {
+                        HStack(spacing: 8) {
+                            Label(L10n.text("Could not load places"), systemImage: "mappin.slash")
+                                .foregroundStyle(.secondary)
+                            if let retryPlaces { Button(L10n.text("Retry"), action: retryPlaces) }
+                        }.font(.callout)
+                    }
                     if let failure = message.failure {
                         Label(failure, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
                             .textSelection(.enabled)
@@ -117,6 +125,19 @@ import GrokCore
                 .disabled(message.text.isEmpty)
             if let date = message.createdAt {
                 Text(date, format: .dateTime.day().month().hour().minute())
+            }
+        }
+    }
+
+    @ViewBuilder private var answerBody: some View {
+        if message.placeBlocks.isEmpty {
+            MarkdownMessage(text: message.displayMarkdown, media: media)
+        } else {
+            ForEach(Array(message.placeBlocks.enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .text(let text): MarkdownMessage(text: GrokMessageContent.markdown(text, sources: message.sources), media: media)
+                case .gallery(let gallery): PlaceCardsView(gallery: gallery, media: media)
+                }
             }
         }
     }

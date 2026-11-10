@@ -260,3 +260,15 @@
 "No views" = "No views";
 "Views: %@" = "Views: %@";
 "Could not load shared conversations" = "Could not load shared conversations";
+"View place details" = "View place details";
+"Open now" = "Open now";
+"Closed now" = "Closed now";
+"Directions" = "Directions";
+"Rating" = "Rating";
+"Reviews: %@" = "Reviews: %@";
+"Hours" = "Hours";
+"Address" = "Address";
+"Phone" = "Phone";
+"Website" = "Website";
+"Photo %@" = "Photo %@";
+"Could not load places" = "Could not load places";

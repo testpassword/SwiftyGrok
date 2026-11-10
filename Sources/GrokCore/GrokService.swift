@@ -26,6 +26,8 @@ public protocol GrokServing: AnyObject {
 public final class GrokService: GrokServing, ProjectServing, SharedConversationServing {
     private let client: GrokClient
     private var assetCache: [String: MessageAttachment] = [:]
+    private let placeHistory: any PlaceHistoryLoading
+    private var placeCache: [String: PlaceResponseContent] = [:]
 
     public func usageLimit(modeID: String) async throws -> UsageWindow {
         let limit = try await client.rateLimits(modelName: modeID)
@@ -35,7 +37,8 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
         return UsageWindow(id: modeID, remaining: remaining, resetAt: reset)
     }
 
-    public init(credentials: SessionCredentials, session: URLSession? = nil) throws {
+    public init(credentials: SessionCredentials, session: URLSession? = nil, placeHistory: (any PlaceHistoryLoading)? = nil) throws {
+        self.placeHistory = placeHistory ?? GatewayPlaceHistory(credentials: credentials)
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil
         config.httpShouldSetCookies = false
@@ -244,6 +247,25 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
             messages.append(ChatMessage(id: response.responseId, parentID: parent,
                                role: role, text: response.message, createdAt: GrokDate.parse(response.createTime),
                                sources: content.sources, attachments: attachments, reasoning: content.reasoning, reasoningDuration: content.reasoningDuration, failure: content.failure))
+        }
+        let candidates = responses.filter { PlaceResponseContent.needsHistory($0.richContent) }.map(\.responseId)
+        let missing = candidates.filter { placeCache[$0] == nil }
+        var placesFailed = false
+        if !missing.isEmpty {
+            do {
+                let loaded = try await placeHistory.load(conversationID: id, responseIDs: missing)
+                try Task.checkCancellation()
+                if placeCache.count + loaded.count > 256 { placeCache.removeAll() }
+                placeCache.merge(loaded) { _, new in new }
+            } catch {
+                try Task.checkCancellation()
+                placesFailed = true
+            }
+        }
+        for index in messages.indices where candidates.contains(messages[index].id) {
+            if let cards = placeCache[messages[index].id] {
+                messages[index].placeBlocks = cards.blocks(matching: messages[index].text)
+            } else { messages[index].placesUnavailable = placesFailed }
         }
         return try ChatThread(responses: messages)
     }

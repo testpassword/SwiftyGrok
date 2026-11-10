@@ -260,3 +260,15 @@
 "No views" = "Нет просмотров";
 "Views: %@" = "Просмотры: %@";
 "Could not load shared conversations" = "Не удалось загрузить общие разговоры";
+"View place details" = "Подробнее о месте";
+"Open now" = "Сейчас открыто";
+"Closed now" = "Сейчас закрыто";
+"Directions" = "Проложить маршрут";
+"Rating" = "Рейтинг";
+"Reviews: %@" = "Отзывов: %@";
+"Hours" = "Часы работы";
+"Address" = "Адрес";
+"Phone" = "Телефон";
+"Website" = "Сайт";
+"Photo %@" = "Фотография %@";
+"Could not load places" = "Не удалось загрузить места";

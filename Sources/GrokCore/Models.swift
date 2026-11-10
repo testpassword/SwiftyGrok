@@ -64,6 +64,8 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
     public var reasoning: String?
     public var reasoningDuration: TimeInterval?
     public let failure: String?
+    public var placeBlocks: [PlaceMessageBlock] = []
+    public var placesUnavailable = false
 
     public init(id: String, parentID: String? = nil, role: Role, text: String, createdAt: Date? = nil,
                 sources: [MessageSource] = [], attachments: [MessageAttachment] = [], reasoning: String? = nil, reasoningDuration: TimeInterval? = nil, failure: String? = nil) {

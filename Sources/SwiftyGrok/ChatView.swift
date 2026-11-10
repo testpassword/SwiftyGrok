@@ -692,7 +692,8 @@ import UniformTypeIdentifiers
                     ForEach(store.messages) { message in
                         MessageView(message: message, isStreaming: store.isSending && message.id == store.messages.last?.id,
                                     isThinking: store.isSending && store.isThinking && message.id == store.messages.last?.id,
-                                    media: app.media, conversationURL: store.publicChatLink?.url ?? (store.isTemporary ? nil : store.selectedConversationID.flatMap { URL(string: "https://grok.com/c/\($0)") }))
+                                    media: app.media, conversationURL: store.publicChatLink?.url ?? (store.isTemporary ? nil : store.selectedConversationID.flatMap { URL(string: "https://grok.com/c/\($0)") }),
+                                    retryPlaces: store.isSending ? nil : { Task { await store.loadSelectedConversation() } })
                             .id(message.id)
                     }
                     Color.clear.frame(height: 1).id("bottom")
