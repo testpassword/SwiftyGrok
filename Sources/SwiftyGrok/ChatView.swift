@@ -289,6 +289,7 @@ import UniformTypeIdentifiers
             if #available(macOS 26.0, *) {
                 historyList
                     .listStyle(.sidebar)
+                    .contentMargins(.horizontal, 0, for: .scrollContent)
                     .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
                     .scrollEdgeEffectHidden(false, for: .top)
                     .safeAreaBar(edge: .bottom, spacing: 0) { historyControls }
@@ -387,7 +388,7 @@ import UniformTypeIdentifiers
             .buttonStyle(.borderless)
             .accessibilityLabel(L10n.format(expandedProjectIDs.contains(project.id) ? "Collapse %@" : "Expand %@", project.name))
         }
-        .padding(.horizontal, 9).padding(.vertical, 4)
+        .padding(.horizontal, 6).padding(.vertical, 4)
         .background(store.selectedProjectID == project.id && store.selectedConversationID == nil ? Color.accentColor.opacity(0.16) : .clear,
                     in: RoundedRectangle(cornerRadius: 8))
         .contentShape(Rectangle())
@@ -401,7 +402,7 @@ import UniformTypeIdentifiers
         }
         .help(project.description)
         .listRowSeparator(.hidden)
-        .listRowInsets(EdgeInsets(top: 1, leading: 5, bottom: 1, trailing: 5))
+        .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
         .listRowBackground(Color.clear)
     }
 
@@ -453,7 +454,7 @@ import UniformTypeIdentifiers
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 7).padding(.leading, 9 + indentation).padding(.trailing, 9)
+            .padding(.vertical, 7).padding(.leading, 6 + indentation).padding(.trailing, 6)
         }
             .buttonStyle(HistoryRowStyle(selected: store.selectedConversationID == chat.id))
             .overlay {
@@ -486,7 +487,7 @@ import UniformTypeIdentifiers
             .accessibilityValue(store.selectedConversationID == chat.id ? L10n.text("Selected") : "")
             .id("\(scope)-\(chat.id)")
             .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 1, leading: 5, bottom: 1, trailing: 5))
+            .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
             .listRowBackground(Color.clear)
     }
 
@@ -565,7 +566,7 @@ import UniformTypeIdentifiers
             .buttonStyle(.borderless)
             .accessibilityLabel(L10n.text(projectsExpanded ? "Collapse projects" : "Expand projects"))
         }
-        .padding(.horizontal, 14).padding(.vertical, 6)
+        .padding(.horizontal, 6).padding(.vertical, 6)
     }
 
     private var historyControls: some View {
@@ -698,7 +699,7 @@ import UniformTypeIdentifiers
                             MessageView(message: message, isStreaming: store.isSending && message.id == store.messages.last?.id,
                                         isThinking: store.isSending && store.isThinking && message.id == store.messages.last?.id,
                                         media: app.media, conversationURL: store.publicChatLink?.url ?? (store.isTemporary ? nil : store.selectedConversationID.flatMap { URL(string: "https://grok.com/c/\($0)") }),
-                                        retryPlaces: store.isSending ? nil : { Task { await store.loadSelectedConversation() } })
+                                        retryCards: store.isSending ? nil : { Task { await store.loadSelectedConversation() } })
                                 .environment(\.chatScrollInset, message.role == .assistant ? horizontalScrollInset(inset) : 0)
                                 .id(message.id)
                         }

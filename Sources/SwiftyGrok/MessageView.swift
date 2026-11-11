@@ -8,7 +8,7 @@ import GrokCore
     let isThinking: Bool
     let media: MessageMediaLoader?
     let conversationURL: URL?
-    var retryPlaces: (() -> Void)? = nil
+    var retryCards: (() -> Void)? = nil
     private let sourceIconSize: CGFloat = 14
     private let sourceFont = Font.system(size: 12)
     @State private var appearance = AppearanceSettings.shared
@@ -41,14 +41,15 @@ import GrokCore
                 VStack(alignment: .leading, spacing: 8) {
                     if let reasoning = message.reasoning {
                         DisclosureGroup(reasoningTitle) {
-                            MarkdownMessage(text: reasoning, media: media).foregroundStyle(.secondary).padding(.top, 8)
+                            AssistantTextContent(text: reasoning, sources: message.sources, media: media)
+                                .foregroundStyle(.secondary).padding(.top, 8)
                         }
                         .foregroundStyle(.secondary)
                         .disclosureGroupStyle(ClickableDisclosureStyle())
                     } else if message.reasoningDuration != nil {
                         Text(reasoningTitle).font(.callout).foregroundStyle(.secondary)
                     }
-                    if message.text.isEmpty && message.attachments.isEmpty && message.placeBlocks.isEmpty && message.failure == nil {
+                    if message.text.isEmpty && message.attachments.isEmpty && message.contentBlocks.isEmpty && message.failure == nil {
                         HStack(spacing: 8) {
                             if isThinking { ProgressView().controlSize(.small) }
                             Text(isStreaming ? (isThinking ? L10n.text("Grok is thinking…") : L10n.text("Waiting for a response…")) : L10n.text("No response text received"))
@@ -59,11 +60,11 @@ import GrokCore
                         if isThinking { Text(L10n.text("Grok is thinking…")).font(.caption).foregroundStyle(.secondary) }
                     }
                     attachments
-                    if message.placesUnavailable {
+                    if message.cardsUnavailable {
                         HStack(spacing: 8) {
-                            Label(L10n.text("Could not load places"), systemImage: "mappin.slash")
+                            Label(L10n.text("Could not load response cards"), systemImage: "rectangle.stack.badge.exclamationmark")
                                 .foregroundStyle(.secondary)
-                            if let retryPlaces { Button(L10n.text("Retry"), action: retryPlaces) }
+                            if let retryCards { Button(L10n.text("Retry"), action: retryCards) }
                         }.font(.callout)
                     }
                     if let failure = message.failure {
@@ -107,7 +108,7 @@ import GrokCore
                         }
                         .disclosureGroupStyle(SourcesDisclosureStyle())
                     }
-                    if !isStreaming && !message.text.isEmpty {
+                    if !isStreaming && !message.displayMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button(action: copyMessage) {
                             Image(systemName: "doc.on.doc").font(.system(size: 12))
                         }
@@ -130,13 +131,15 @@ import GrokCore
     }
 
     @ViewBuilder private var answerBody: some View {
-        if message.placeBlocks.isEmpty {
-            MarkdownMessage(text: message.displayMarkdown, media: media)
+        if message.contentBlocks.isEmpty {
+            AssistantTextContent(text: message.text, sources: message.sources, media: media)
         } else {
-            ForEach(Array(message.placeBlocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(message.contentBlocks.enumerated()), id: \.offset) { _, block in
                 switch block {
-                case .text(let text): MarkdownMessage(text: GrokMessageContent.markdown(text, sources: message.sources), media: media)
+                case .text(let text): AssistantTextContent(text: text, sources: message.sources, media: media)
                 case .gallery(let gallery): PlaceCardsView(gallery: gallery, media: media)
+                case .weather(let card): WeatherCardView(card: card).id(card.id)
+                case .standings(let card): SportsStandingsCardView(card: card).id(card.id)
                 }
             }
         }
@@ -207,7 +210,42 @@ private struct SourcesDisclosureStyle: DisclosureGroupStyle {
     }
 }
 
-private struct ClickableDisclosureStyle: DisclosureGroupStyle {
+@MainActor private struct AssistantTextContent: View {
+    let text: String
+    let sources: [MessageSource]
+    let media: MessageMediaLoader?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(ToolUsageContent.parse(text).enumerated()), id: \.offset) { _, block in
+                switch block {
+                case .text(let prose):
+                    if !prose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        MarkdownMessage(text: GrokMessageContent.markdown(prose, sources: sources), media: media)
+                    }
+                case .tool(let tool):
+                    HStack(alignment: .top, spacing: 9) {
+                        Image(systemName: tool.systemImage)
+                            .font(.system(size: 13)).foregroundStyle(.secondary)
+                            .frame(width: 18).padding(.top, 2).accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(tool.title).font(.callout.weight(.medium))
+                            if let detail = tool.detail {
+                                Text(verbatim: detail).font(.caption).foregroundStyle(.secondary)
+                                    .lineLimit(3).help(detail).textSelection(.enabled)
+                            }
+                        }
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct ClickableDisclosureStyle: DisclosureGroupStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {

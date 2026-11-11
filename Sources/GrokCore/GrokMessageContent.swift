@@ -124,8 +124,14 @@ public struct GrokMessageContent {
                 let texts = step["text"] as? [String] ?? (step["text"] as? String).map { [$0] } ?? []
                 let tags = step["tags"] as? [String] ?? (step["tags"] as? String).map { [$0] } ?? []
                 var section = ""
+                var previousTag: String?
                 for (index, text) in texts.enumerated() where index < tags.count {
-                    if ["thinking", "summary", "header"].contains(tags[index]) { section += text }
+                    let tag = tags[index]
+                    if ["thinking", "summary", "header"].contains(tag) {
+                        if let previousTag, previousTag != tag, !section.isEmpty { section += "\n\n" }
+                        section += text
+                        previousTag = tag
+                    }
                 }
                 if !section.isEmpty { fragments.append(section) }
             }
@@ -159,6 +165,7 @@ public struct GrokMessageContent {
 
     /// Convert Grok's display cards to links while preserving literal examples in code.
     public static func markdown(_ text: String, sources: [MessageSource]) -> String {
+        let text = ToolUsageContent.plainText(text)
         var result = ""
         var prose = ""
         var fence: (Character, Int)?

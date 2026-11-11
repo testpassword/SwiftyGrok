@@ -10,8 +10,8 @@
     <key>CFBundleDevelopmentRegion</key><string>en</string>
     <key>CFBundleLocalizations</key><array><string>en</string><string>ru</string></array>
     <key>CFBundlePackageType</key><string>XPC!</string>
-    <key>CFBundleShortVersionString</key><string>1.5.2</string>
-    <key>CFBundleVersion</key><string>96</string>
+    <key>CFBundleShortVersionString</key><string>1.5.3</string>
+    <key>CFBundleVersion</key><string>101</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSExtension</key>
     <dict>

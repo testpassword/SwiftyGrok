@@ -771,6 +771,22 @@ final class ChatStoreTests: XCTestCase {
         XCTAssertEqual(connected.draftFiles.map(\.name), [file.lastPathComponent])
     }
 
+    #if os(macOS)
+    @MainActor func testClipboardImageUsesDraftImportWithoutUploadingOrChangingMessageText() async throws {
+        let service = FakeService()
+        let store = ChatStore(service: service)
+        store.draft = "Question about this picture"
+        let png = try ClipboardImageFixtures.data()
+        await store.importFiles(resolvingDraftFiles: { try ClipboardImageReader.read([png]) })
+        XCTAssertEqual(store.draft, "Question about this picture")
+        XCTAssertEqual(store.draftFiles.first?.data, png)
+        XCTAssertEqual(store.draftFiles.first?.mimeType, "image/png")
+        XCTAssertTrue(service.calls.isEmpty)
+        XCTAssertTrue(service.uploads.isEmpty)
+        XCTAssertFalse(store.isReadingFiles)
+    }
+    #endif
+
     @MainActor func testGeneratedAttachmentPreservesDraftAndWaitsForExplicitSend() async {
         let service = FakeService()
         let store = ChatStore(service: service)

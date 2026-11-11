@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import GrokCore
 
-/// Keep native text editing, but prefer Finder's file objects over their text names.
+/// Keep native text editing and attach clipboard files and images to the draft.
 @MainActor struct ComposerTextEditor: NSViewRepresentable {
     @Binding var text: String
     let contextID: String
@@ -11,6 +11,7 @@ import GrokCore
     let sendShortcut: MessageSendShortcut
     let onSend: () -> Void
     let onPasteFiles: ([URL]) -> Void
+    let onPasteImages: ([Data]) -> Void
     var canAttachFiles: () -> Bool = { true }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -53,6 +54,7 @@ import GrokCore
         editor.sendShortcut = sendShortcut
         editor.onSend = onSend
         editor.onPasteFiles = onPasteFiles
+        editor.onPasteImages = onPasteImages
         editor.canAttachFiles = canAttachFiles
         editor.isEditable = isEnabled
         if let focusRequest, context.coordinator.focusRequest != focusRequest {
@@ -91,6 +93,7 @@ import GrokCore
     var sendShortcut: MessageSendShortcut = .commandEnter
     var onSend: (() -> Void)?
     var onPasteFiles: (([URL]) -> Void)?
+    var onPasteImages: (([Data]) -> Void)?
     var canAttachFiles: () -> Bool = { true }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -144,18 +147,42 @@ import GrokCore
     }
 
     override func paste(_ sender: Any?) {
-        if !pasteFiles() { super.paste(sender) }
+        if !pasteAttachments() { super.paste(sender) }
     }
 
     override func pasteAsPlainText(_ sender: Any?) {
-        if !pasteFiles() { super.pasteAsPlainText(sender) }
+        if !pasteAttachments() { super.pasteAsPlainText(sender) }
     }
 
-    private func pasteFiles() -> Bool {
+    override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        attachmentPasteAllowed(action: menuItem.action) ?? super.validateMenuItem(menuItem)
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        attachmentPasteAllowed(action: item.action) ?? super.validateUserInterfaceItem(item)
+    }
+
+    private func attachmentPasteAllowed(action: Selector?) -> Bool? {
+        guard action == #selector(paste(_:)) || action == #selector(pasteAsPlainText(_:)) else { return nil }
+        if NSPasteboard.general.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
+            return isEditable && canAttachFiles() && onPasteFiles != nil
+        }
+        if ClipboardImageReader.containsImages(on: .general) {
+            return isEditable && canAttachFiles() && onPasteImages != nil
+        }
+        return nil
+    }
+
+    private func pasteAttachments() -> Bool {
         let objects = FileDropInput.urls(from: .general)
-        guard !objects.isEmpty else { return false }
-        guard isEditable, canAttachFiles(), let onPasteFiles else { return true }
-        onPasteFiles(objects)
+        if !objects.isEmpty {
+            guard isEditable, canAttachFiles(), let onPasteFiles else { return true }
+            onPasteFiles(objects)
+            return true
+        }
+        guard ClipboardImageReader.containsImages(on: .general) else { return false }
+        guard isEditable, canAttachFiles(), let onPasteImages else { return true }
+        onPasteImages(ClipboardImageReader.imageData(from: .general))
         return true
     }
 }

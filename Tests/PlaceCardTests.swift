@@ -23,19 +23,20 @@ enum PlaceFixtures {
     ]
 }
 
-@MainActor final class StubPlaceHistory: PlaceHistoryLoading {
+@MainActor final class StubCardHistory: ResponseCardHistoryLoading {
     var calls: [[String]] = []
     var failure: Error?
-    func load(conversationID: String, responseIDs: [String]) async throws -> [String: PlaceResponseContent] {
+    var chunks = PlaceFixtures.chunks
+    func load(conversationID: String, responseIDs: [String]) async throws -> [String: ResponseCardContent] {
         calls.append(responseIDs)
         if let failure { throw failure }
-        return Dictionary(uniqueKeysWithValues: responseIDs.map { ($0, PlaceResponseContent(chunks: PlaceFixtures.chunks)) })
+        return Dictionary(uniqueKeysWithValues: responseIDs.map { ($0, ResponseCardContent(chunks: chunks)) })
     }
 }
 
 final class PlaceCardTests: XCTestCase {
     func testPlacesKeepPositionAndExcludeThinking() throws {
-        let content = PlaceResponseContent(chunks: PlaceFixtures.chunks)
+        let content = ResponseCardContent(chunks: PlaceFixtures.chunks)
         XCTAssertEqual(content.blocks.count, 3)
         XCTAssertEqual(content.blocks.first, .text("Before\n\n"))
         XCTAssertEqual(content.blocks.last, .text("\n\nAfter"))
@@ -49,14 +50,14 @@ final class PlaceCardTests: XCTestCase {
     }
 
     func testUnknownTextShapeCannotTruncateOriginalAnswer() {
-        let content = PlaceResponseContent(chunks: PlaceFixtures.chunks)
+        let content = ResponseCardContent(chunks: PlaceFixtures.chunks)
         XCTAssertEqual(content.blocks(matching: "A complete different answer").first, .text("A complete different answer"))
         XCTAssertEqual(content.blocks(matching: "A complete different answer").count, 2)
     }
 
     func testFormattingDifferencesKeepGalleryBeforeFollowingParagraph() {
         let original = "**Before**\n\n\n\nAfter"
-        let blocks = PlaceResponseContent(chunks: PlaceFixtures.chunks).blocks(matching: original)
+        let blocks = ResponseCardContent(chunks: PlaceFixtures.chunks).blocks(matching: original)
         XCTAssertEqual(blocks.count, 3)
         XCTAssertEqual(blocks.first, .text("**Before**\n\n\n\n"))
         XCTAssertEqual(blocks.last, .text("After"))
@@ -77,7 +78,7 @@ final class PlaceCardTests: XCTestCase {
     }
 
     func testUpdatedGalleryAndDuplicatePlacesDoNotCreateDuplicateCards() {
-        let content = PlaceResponseContent(chunks: [
+        let content = ResponseCardContent(chunks: [
             ["render_places": ["id": "same", "locs": [PlaceFixtures.place, PlaceFixtures.place]]],
             ["render_places": ["id": "same", "locs": [PlaceFixtures.place]]]
         ])
@@ -85,20 +86,20 @@ final class PlaceCardTests: XCTestCase {
         XCTAssertEqual(content.galleries.first?.places.count, 1)
     }
 
-    func testOnlyPlaceToolsRequestSupplementalHistory() {
+    func testPlaceToolDetectionIgnoresUnrelatedTools() {
         func metadata(_ name: String) -> [String: AnyCodable] {
             ["steps": AnyCodable([["toolUsageCards": [["mcp": ["toolName": name]]]]])]
         }
-        XCTAssertTrue(PlaceResponseContent.needsHistory(metadata("places_search")))
-        XCTAssertTrue(PlaceResponseContent.needsHistory(metadata("functions.places_search")))
-        XCTAssertFalse(PlaceResponseContent.needsHistory(metadata("web_search")))
-        XCTAssertFalse(PlaceResponseContent.needsHistory([:]))
+        XCTAssertTrue(ResponseCardContent.needsHistory(metadata("places_search")))
+        XCTAssertTrue(ResponseCardContent.needsHistory(metadata("functions.places_search")))
+        XCTAssertFalse(ResponseCardContent.needsHistory(metadata("web_search")))
+        XCTAssertFalse(ResponseCardContent.needsHistory([:]))
     }
 
     @MainActor func testGatewayLoadsBothBranchesWithoutGenerationAndClosesConnection() async throws {
-        let socket = FakePlaceSocket()
+        let socket = FakeCardSocket()
         var request: URLRequest?
-        let loader = GatewayPlaceHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture", "x-userid": "fixture-user"]), timeout: 1) {
+        let loader = GatewayCardHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture", "x-userid": "fixture-user"]), timeout: 1) {
             request = $0; return socket
         }
         let result = try await loader.load(conversationID: "chat", responseIDs: ["branch-one", "branch-two"])
@@ -117,9 +118,9 @@ final class PlaceCardTests: XCTestCase {
     }
 
     @MainActor func testGatewayReconnectsOnlyWhenRequestedByServer() async throws {
-        let moved = FakePlaceSocket(); moved.moved = true
-        let ready = FakePlaceSocket(); var count = 0
-        let loader = GatewayPlaceHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 1) { _ in
+        let moved = FakeCardSocket(); moved.moved = true
+        let ready = FakeCardSocket(); var count = 0
+        let loader = GatewayCardHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 1) { _ in
             count += 1; return count == 1 ? moved : ready
         }
         let result = try await loader.load(conversationID: "chat", responseIDs: ["answer"])
@@ -128,31 +129,63 @@ final class PlaceCardTests: XCTestCase {
     }
 
     @MainActor func testMissingChunksCannotBeCachedAsSuccessfulEmptyGallery() async throws {
-        let socket = FakePlaceSocket(); socket.omitChunks = true
-        let loader = GatewayPlaceHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 1) { _ in socket }
+        let socket = FakeCardSocket(); socket.omitChunks = true
+        let loader = GatewayCardHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 1) { _ in socket }
         do { _ = try await loader.load(conversationID: "chat", responseIDs: ["answer"]); XCTFail("Missing structured history accepted") }
         catch { XCTAssertTrue(socket.closed) }
     }
 
     @MainActor func testCancellationClosesSocketInsteadOfWaitingForTimeout() async throws {
-        let socket = FakePlaceSocket(); socket.stall = true
-        let loader = GatewayPlaceHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 5) { _ in socket }
+        let socket = FakeCardSocket(); socket.stall = true
+        let loader = GatewayCardHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 5) { _ in socket }
         let task = Task { try await loader.load(conversationID: "chat", responseIDs: ["answer"]) }
         while socket.waiter == nil { await Task.yield() }
         task.cancel()
         do { _ = try await task.value; XCTFail("Cancellation ignored") } catch { XCTAssertTrue(socket.closed) }
     }
 
+    @MainActor func testBranchPageFindsRequestedAnswersBehindLaterContinuation() async throws {
+        let socket = FakeCardSocket()
+        socket.relatedResponses = ["later-unrequested", "branch-one", "branch-two"]
+        socket.chunksByID["branch-two"] = [["render_weather": WeatherFixtures.card], ["render_sports": SportsFixtures.card]]
+        let loader = GatewayCardHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 1) { _ in socket }
+        let loaded = try await loader.load(conversationID: "chat", responseIDs: ["branch-one", "branch-two"])
+        XCTAssertEqual(Set(loaded.keys), ["branch-one", "branch-two"])
+        XCTAssertEqual(loaded["branch-two"]?.blocks.count, 2)
+        XCTAssertEqual(socket.events.count, 2, "A branch page can satisfy multiple requested responses")
+        XCTAssertEqual(socket.events.last?["limit"] as? Int, 50)
+        XCTAssertEqual(socket.events.last?["drill_down"] as? Bool, false)
+    }
+
+    @MainActor func testMissingAnswerIsLoadedFromNextPage() async throws {
+        let socket = FakeCardSocket(); socket.paged = true
+        let loader = GatewayCardHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 1) { _ in socket }
+        let loaded = try await loader.load(conversationID: "chat", responseIDs: ["old-answer"])
+        XCTAssertNotNil(loaded["old-answer"])
+        XCTAssertEqual(socket.events.count, 3)
+        XCTAssertEqual(socket.events.last?["before_id"] as? String, "older-page")
+    }
+
+    @MainActor func testRepeatedPageCursorCannotLoopForever() async throws {
+        let socket = FakeCardSocket(); socket.paged = true; socket.repeatingCursor = true
+        let loader = GatewayCardHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 1) { _ in socket }
+        do { _ = try await loader.load(conversationID: "chat", responseIDs: ["old-answer"]); XCTFail("Repeated cursor accepted") }
+        catch { XCTAssertTrue(socket.closed); XCTAssertEqual(socket.events.count, 3) }
+    }
+
     @MainActor func testDeadlineClosesUnresponsiveSocket() async throws {
-        let socket = FakePlaceSocket(); socket.stall = true
-        let loader = GatewayPlaceHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 0.03) { _ in socket }
+        let socket = FakeCardSocket(); socket.stall = true
+        let loader = GatewayCardHistory(credentials: try SessionCredentials(cookies: ["sso": "fixture"]), timeout: 0.03) { _ in socket }
         do { _ = try await loader.load(conversationID: "chat", responseIDs: ["answer"]); XCTFail("Unresponsive history accepted") }
         catch { XCTAssertTrue(socket.closed) }
     }
 }
 
-@MainActor private final class FakePlaceSocket: PlaceHistorySocket {
+@MainActor private final class FakeCardSocket: CardHistorySocket {
     var moved = false, omitChunks = false, stall = false, closed = false
+    var paged = false, repeatingCursor = false
+    var relatedResponses: [String]?
+    var chunksByID: [String: [[String: Any]]] = [:]
     var events: [[String: Any]] = []
     var queue: [Data] = []
     var waiter: CheckedContinuation<Data, Error>?
@@ -172,9 +205,15 @@ final class PlaceCardTests: XCTestCase {
             try enqueue(["type": "conversation.attached", "conversation": ["id": chat]])
         case "conversation.history.load":
             let load = event["load_id"] as! String, leaf = event["leaf_id"] as! String
-            try enqueue(["type": "conversation.history.item", "load_id": load,
-                         "item": ["id": leaf, "x_grok": omitChunks ? [:] : ["output_chunks": PlaceFixtures.chunks]]])
-            try enqueue(["type": "conversation.history.done", "load_id": load])
+            if paged && (event["before_id"] == nil || repeatingCursor) {
+                try enqueue(["type": "conversation.history.done", "load_id": load, "has_more": true, "next_before_id": "older-page"])
+            } else {
+                for id in relatedResponses ?? [leaf] {
+                    try enqueue(["type": "conversation.history.item", "load_id": load,
+                                 "item": ["id": id, "x_grok": omitChunks ? [:] : ["output_chunks": chunksByID[id] ?? PlaceFixtures.chunks]]])
+                }
+                try enqueue(["type": "conversation.history.done", "load_id": load])
+            }
         default: XCTFail("Unexpected mutating gateway event")
         }
     }

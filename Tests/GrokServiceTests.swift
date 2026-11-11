@@ -39,31 +39,56 @@ private final class FixtureProtocol: URLProtocol {
 final class GrokServiceTests: XCTestCase {
     @MainActor func testPlaceCardsAreHydratedAndCachedWithoutChangingThreadTopology() async throws {
         FixtureProtocol.handler = placeThreadFixture
-        let places = StubPlaceHistory()
-        let client = try service(placeHistory: places)
+        let places = StubCardHistory()
+        let client = try service(cardHistory: places)
         let first = try await client.thread(id: "chat")
         let second = try await client.thread(id: "chat")
         XCTAssertEqual(places.calls, [["answer"]])
         let answer = try XCTUnwrap(try first.path().last)
         XCTAssertEqual(answer.parentID, "question")
-        XCTAssertEqual(answer.placeBlocks.count, 3)
-        XCTAssertFalse(answer.placesUnavailable)
-        XCTAssertEqual(try second.path().last?.placeBlocks, answer.placeBlocks)
+        XCTAssertEqual(answer.contentBlocks.count, 3)
+        XCTAssertFalse(answer.cardsUnavailable)
+        XCTAssertEqual(try second.path().last?.contentBlocks, answer.contentBlocks)
+    }
+
+    @MainActor func testWeatherAndSportsCardsAreHydratedAtTheirOriginalPositions() async throws {
+        FixtureProtocol.handler = { request in
+            if request.url!.path.hasSuffix("response-node") {
+                return (200, Data(#"{"responseNodes":[{"responseId":"question","sender":"human"},{"responseId":"answer","sender":"assistant","parentResponseId":"question"}]}"#.utf8))
+            }
+            let tools: [[String: Any]] = [["callWeatherApi": [:]], ["callSportsApi": [:]]]
+            let responses: [[String: Any]] = [
+                ["responseId": "question", "sender": "human", "message": "Example"],
+                ["responseId": "answer", "sender": "assistant", "parentResponseId": "question", "message": "Weather\nStandings\nAfter",
+                 "steps": [["toolUsageCards": tools]]]
+            ]
+            return (200, try JSONSerialization.data(withJSONObject: ["responses": responses]))
+        }
+        let cards = StubCardHistory()
+        cards.chunks = [["text": ["text": "Weather", "channel": "ASSISTANT"]], ["render_weather": WeatherFixtures.card],
+                        ["text": ["text": "Standings", "channel": "ASSISTANT"]], ["render_sports": SportsFixtures.card],
+                        ["text": ["text": "After", "channel": "ASSISTANT"]]]
+        let thread = try await service(cardHistory: cards).thread(id: "chat")
+        let answer = try XCTUnwrap(try thread.path().last)
+        XCTAssertEqual(cards.calls, [["answer"]])
+        XCTAssertEqual(answer.contentBlocks.count, 5)
+        guard case .weather = answer.contentBlocks[1], case .standings = answer.contentBlocks[3] else { return XCTFail("Missing weather/sports") }
+        XCTAssertEqual(answer.text, "Weather\nStandings\nAfter")
     }
 
     @MainActor func testPlaceFailureKeepsTextAndCanBeRetried() async throws {
         FixtureProtocol.handler = placeThreadFixture
-        let places = StubPlaceHistory(); places.failure = URLError(.notConnectedToInternet)
-        let client = try service(placeHistory: places)
+        let places = StubCardHistory(); places.failure = URLError(.notConnectedToInternet)
+        let client = try service(cardHistory: places)
         let first = try await client.thread(id: "chat")
         let answer = try XCTUnwrap(try first.path().last)
         XCTAssertEqual(answer.text, "Before\n\nAfter")
-        XCTAssertTrue(answer.placesUnavailable)
-        XCTAssertTrue(answer.placeBlocks.isEmpty)
+        XCTAssertTrue(answer.cardsUnavailable)
+        XCTAssertTrue(answer.contentBlocks.isEmpty)
         places.failure = nil
         let second = try await client.thread(id: "chat")
-        XCTAssertFalse(try second.path().last!.placesUnavailable)
-        XCTAssertFalse(try second.path().last!.placeBlocks.isEmpty)
+        XCTAssertFalse(try second.path().last!.cardsUnavailable)
+        XCTAssertFalse(try second.path().last!.contentBlocks.isEmpty)
         XCTAssertEqual(places.calls.count, 2)
     }
 
@@ -609,10 +634,10 @@ final class GrokServiceTests: XCTestCase {
         XCTAssertEqual(calls, 3)
     }
 
-    @MainActor private func service(placeHistory: (any PlaceHistoryLoading)? = nil) throws -> GrokService {
+    @MainActor private func service(cardHistory: (any ResponseCardHistoryLoading)? = nil) throws -> GrokService {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureProtocol.self]
-        return try GrokService(credentials: SessionCredentials(cookies: ["sso": "fixture"], userAgent: "FixtureBrowser/1"), session: URLSession(configuration: config), placeHistory: placeHistory)
+        return try GrokService(credentials: SessionCredentials(cookies: ["sso": "fixture"], userAgent: "FixtureBrowser/1"), session: URLSession(configuration: config), cardHistory: cardHistory)
     }
 
     @MainActor func testHistoryUsesActualEndpointCookieAndSearch() async throws {

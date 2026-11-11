@@ -63,6 +63,7 @@ import GrokCore
                                            sendShortcut: behavior.sendShortcut,
                                            onSend: { sendMessage() },
                                            onPasteFiles: { importFiles(.success($0)) },
+                                           onPasteImages: { importClipboardImages($0) },
                                            canAttachFiles: { store.canAttachFiles })
                             .accessibilityLabel(L10n.text("Message Grok"))
                     }
@@ -152,6 +153,17 @@ import GrokCore
     private func importFiles(_ result: Result<[URL], Error>) {
         guard case let .success(urls) = result, !urls.isEmpty else { return }
         Task { await store.importFiles(urls) }
+    }
+
+    private func importClipboardImages(_ images: [Data]) {
+        let remaining = DraftFile.maximumTotalSize - store.draftFiles.reduce(0) { $0 + $1.data.count }
+        Task {
+            await store.importFiles(resolvingDraftFiles: {
+                try await Task.detached(priority: .userInitiated) {
+                    try ClipboardImageReader.read(images, maximumBytes: remaining)
+                }.value
+            })
+        }
     }
 }
 

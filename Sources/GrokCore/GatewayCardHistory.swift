@@ -3,34 +3,34 @@ import Foundation
 import FoundationNetworking
 #endif
 
-@MainActor public protocol PlaceHistoryLoading: AnyObject {
-    func load(conversationID: String, responseIDs: [String]) async throws -> [String: PlaceResponseContent]
+@MainActor public protocol ResponseCardHistoryLoading: AnyObject {
+    func load(conversationID: String, responseIDs: [String]) async throws -> [String: ResponseCardContent]
 }
 
-@MainActor protocol PlaceHistorySocket: AnyObject {
+@MainActor protocol CardHistorySocket: AnyObject {
     func send(_ data: Data) async throws
     func receive() async throws -> Data
     func close()
 }
 
 /// Supplemental read-only history. Generation, queue changes, and model updates
-/// stay on the existing transport; this connection can only load known responses.
-@MainActor public final class GatewayPlaceHistory: PlaceHistoryLoading {
+/// stay on the existing transport; only requested responses are retained from branch history.
+@MainActor public final class GatewayCardHistory: ResponseCardHistoryLoading {
     private let credentials: SessionCredentials
-    private let factory: (URLRequest) -> any PlaceHistorySocket
+    private let factory: (URLRequest) -> any CardHistorySocket
     private let timeout: TimeInterval
 
     public convenience init(credentials: SessionCredentials) {
-        self.init(credentials: credentials, timeout: 8, factory: { NativePlaceHistorySocket(request: $0) })
+        self.init(credentials: credentials, timeout: 8, factory: { NativeCardHistorySocket(request: $0) })
     }
 
     init(credentials: SessionCredentials, timeout: TimeInterval,
-         factory: @escaping (URLRequest) -> any PlaceHistorySocket) {
+         factory: @escaping (URLRequest) -> any CardHistorySocket) {
         self.credentials = credentials; self.timeout = timeout; self.factory = factory
     }
 
     static func sessionEvent(conversationID: String) -> [String: Any] {
-        ["type": "session.create", "event_id": "evt_places_" + UUID().uuidString,
+        ["type": "session.create", "event_id": "evt_cards_" + UUID().uuidString,
          "session": ["model": "auto", "x_grok": [
             "protocol_capabilities": ["conversation_attached", "custom_methods_v1"],
             "conversation_id": conversationID, "load_existing": true, "needs_history": false,
@@ -38,7 +38,7 @@ import FoundationNetworking
          ]]]
     }
 
-    public func load(conversationID: String, responseIDs: [String]) async throws -> [String: PlaceResponseContent] {
+    public func load(conversationID: String, responseIDs: [String]) async throws -> [String: ResponseCardContent] {
         guard !conversationID.isEmpty, !responseIDs.isEmpty else { return [:] }
         let requested = Set(responseIDs)
         let end = Date().addingTimeInterval(timeout)
@@ -69,8 +69,8 @@ import FoundationNetworking
         throw URLError(.badServerResponse)
     }
 
-    private func read(_ socket: any PlaceHistorySocket, conversationID: String,
-                      requested: Set<String>) async throws -> [String: PlaceResponseContent] {
+    private func read(_ socket: any CardHistorySocket, conversationID: String,
+                      requested: Set<String>) async throws -> [String: ResponseCardContent] {
         func send(_ event: [String: Any]) async throws {
             try Task.checkCancellation()
             try await socket.send(JSONSerialization.data(withJSONObject: ["session_id": conversationID, "event": event]))
@@ -78,8 +78,20 @@ import FoundationNetworking
         try await send(Self.sessionEvent(conversationID: conversationID))
         var created = false, attached = false, sentLoads = false
         var pending: [String: String] = [:]
-        var result: [String: PlaceResponseContent] = [:]
+        var cursors = Set<String>()
+        var result: [String: ResponseCardContent] = [:]
         var bytes = 0
+        func loadPage(_ id: String, before: String? = nil) async throws {
+            let load = UUID().uuidString
+            pending[load] = id
+            // A one-item page can contain a later continuation, omitting the
+            // requested answer's render chunks. Read the branch around it and
+            // retain only the responses requested by the caller.
+            var event: [String: Any] = ["type": "conversation.history.load", "event_id": "evt_cards_" + load,
+                                       "load_id": load, "leaf_id": id, "limit": 50, "drill_down": false]
+            if let before { event["before_id"] = before }
+            try await send(event)
+        }
         for _ in 0..<2_000 {
             try Task.checkCancellation()
             let data = try await socket.receive()
@@ -94,30 +106,33 @@ import FoundationNetworking
             switch type {
             case "session.created": created = true
             case "conversation.attached":
-                guard PlaceJSON.object(event, "conversation")["id"] as? String == conversationID else { throw URLError(.badServerResponse) }
+                guard CardJSON.object(event, "conversation")["id"] as? String == conversationID else { throw URLError(.badServerResponse) }
                 attached = true
             case "error", "session.ended": throw URLError(.badServerResponse)
             case "conversation.history.item":
-                guard let load = event["load_id"] as? String, let expected = pending[load],
-                      let item = event["item"] as? [String: Any], item["id"] as? String == expected else { continue }
-                let grok = PlaceJSON.object(item, "x_grok")
+                guard let load = event["load_id"] as? String, pending[load] != nil,
+                      let item = event["item"] as? [String: Any], let id = item["id"] as? String,
+                      requested.contains(id) else { continue }
+                let grok = CardJSON.object(item, "x_grok")
                 guard let chunks = grok["output_chunks"] as? [[String: Any]] else { throw URLError(.cannotParseResponse) }
-                result[expected] = PlaceResponseContent(chunks: chunks)
+                result[id] = ResponseCardContent(chunks: chunks)
             case "conversation.history.done":
                 guard let load = event["load_id"] as? String, let expected = pending[load] else { continue }
-                guard event["errored"] as? Bool != true, result[expected] != nil else { throw URLError(.cannotParseResponse) }
+                guard event["errored"] as? Bool != true else { throw URLError(.cannotParseResponse) }
                 pending.removeValue(forKey: load)
-                if sentLoads && pending.isEmpty { return result }
+                if result[expected] == nil {
+                    guard event["has_more"] as? Bool == true,
+                          let before = CardJSON.string(event, "next_before_id"),
+                          cursors.insert(expected + ":" + before).inserted else { throw URLError(.cannotParseResponse) }
+                    try await loadPage(expected, before: before)
+                } else if let next = requested.sorted().first(where: { result[$0] == nil }) {
+                    try await loadPage(next)
+                } else { return result }
             default: break
             }
             if created && attached && !sentLoads {
                 sentLoads = true
-                for id in requested.sorted() {
-                    let load = UUID().uuidString
-                    pending[load] = id
-                    try await send(["type": "conversation.history.load", "event_id": "evt_places_" + load,
-                                    "load_id": load, "leaf_id": id, "limit": 1])
-                }
+                if let first = requested.sorted().first { try await loadPage(first) }
             }
         }
         throw URLError(.dataLengthExceedsMaximum)
@@ -126,7 +141,7 @@ import FoundationNetworking
 
 private enum GatewayHistoryError: Error { case moved }
 
-@MainActor private final class NativePlaceHistorySocket: PlaceHistorySocket {
+@MainActor private final class NativeCardHistorySocket: CardHistorySocket {
     private let session: URLSession
     private let task: URLSessionWebSocketTask
 
@@ -134,7 +149,7 @@ private enum GatewayHistoryError: Error { case moved }
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil; config.httpShouldSetCookies = false; config.urlCache = nil
         config.timeoutIntervalForRequest = 8
-        session = URLSession(configuration: config, delegate: PlaceSocketRedirectDelegate(), delegateQueue: nil)
+        session = URLSession(configuration: config, delegate: CardSocketRedirectDelegate(), delegateQueue: nil)
         task = session.webSocketTask(with: request)
         task.maximumMessageSize = 8 * 1024 * 1024
         task.resume()
@@ -150,7 +165,7 @@ private enum GatewayHistoryError: Error { case moved }
     func close() { task.cancel(with: .normalClosure, reason: nil); session.invalidateAndCancel() }
 }
 
-private final class PlaceSocketRedirectDelegate: NSObject, URLSessionTaskDelegate {
+private final class CardSocketRedirectDelegate: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
