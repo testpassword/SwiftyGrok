@@ -154,6 +154,7 @@ private extension EnvironmentValues {
             .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.1)))
         }
         .fixedSize(horizontal: false, vertical: true)
+        .modifier(ChatHorizontalScroll())
     }
 
     private func alignment(columns: [PresentationIntent.TableColumn], index: Int) -> Alignment {

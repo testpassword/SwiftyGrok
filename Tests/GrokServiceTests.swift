@@ -507,6 +507,40 @@ final class GrokServiceTests: XCTestCase {
         }
     }
 
+    @MainActor func testSubscriptionNameUsesActivePlanAndRecognizesPremiumTiers() async throws {
+        let fixtures = [
+            (#"{"subscriptions":[{"tier":"TIER_PREMIUM","status":"active"}]}"#, "Premium"),
+            (#"{"subscriptions":[{"tier":"TIER_PREMIUM_PLUS","status":"active"}]}"#, "Premium+"),
+            (#"{"subscriptions":[{"displayName":"X Premium+","status":"active"}]}"#, "Premium+"),
+            (#"{"subscriptions":[{"tier":"TIER_SUPERGROK","status":"active"}]}"#, "SuperGrok"),
+            (#"{"subscriptions":[{"tier":"TIER_SUPERGROK_LITE","status":"active"}]}"#, "SuperGrok Lite"),
+            (#"{"subscriptions":[{"tier":"TIER_PREMIUM","status":"expired"},{"tier":"TIER_SUPERGROK_HEAVY","status":"active"}]}"#, "SuperGrok Heavy"),
+            (#"{"subscriptions":[{"tier":"TIER_FREE","status":"active"}]}"#, "Free"),
+            (#"{"subscriptions":[{"displayName":"Business","status":"active"}]}"#, "Business"),
+            (#"{"subscriptions":[]}"#, "Free")
+        ]
+        for (json, expected) in fixtures {
+            FixtureProtocol.handler = { request in
+                XCTAssertEqual(request.url?.path, "/rest/subscriptions")
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "sso=fixture")
+                return (200, Data(json.utf8))
+            }
+            let name = try await service().subscriptionName()
+            XCTAssertEqual(name, expected)
+        }
+    }
+
+    @MainActor func testSubscriptionFailureIsNotReportedAsFreePlan() async throws {
+        FixtureProtocol.handler = { _ in (401, Data("{}".utf8)) }
+        do {
+            _ = try await service().subscriptionName()
+            XCTFail("An unavailable subscription must not be presented as a free plan")
+        } catch {
+            XCTAssertTrue(DisplayError(error).needsLogin)
+        }
+    }
+
     @MainActor func testProfileUsesAuthenticatedNameAndHandlesMissingNames() async throws {
         let fixtures = [
             (#"{"user":{"givenName":"  Test ","familyName":" User ","email":"fixture@example.com"}}"#, "Test User"),

@@ -22,7 +22,9 @@ import UniformTypeIdentifiers
                             .lineLimit(1).truncationMode(.middle).help(email)
                     }
                 }
-                Text(UsageText.text("Chat limits")).font(.subheadline.weight(.semibold))
+                if let subscription = monitor.chatSubscriptionName {
+                    Text(subscription).font(.subheadline.weight(.semibold)).lineLimit(1)
+                }
                 if snapshot.fetchedAt == nil {
                     if monitor.isRefreshing {
                         ProgressView().controlSize(.small)
@@ -73,9 +75,9 @@ import UniformTypeIdentifiers
 
     private func value(_ window: UsageWindow, at date: Date) -> String {
         guard !window.hasReset(at: date) else { return "—" }
-        if let remaining = window.remaining { return UsageText.format("Remaining: %@", String(remaining)) }
+        if let remaining = window.remaining { return UsageText.format("Responses remaining: %@", String(remaining)) }
         if let percent = window.remainingPercent {
-            return UsageText.format("Remaining: %@%%", percent.formatted(.number.precision(.fractionLength(0))))
+            return UsageText.format("Responses remaining: %@%%", percent.formatted(.number.precision(.fractionLength(0))))
         }
         return "—"
     }
@@ -286,15 +288,17 @@ import UniformTypeIdentifiers
         Group {
             if #available(macOS 26.0, *) {
                 historyList
+                    .listStyle(.sidebar)
                     .scrollEdgeEffectStyle(.soft, for: [.top, .bottom])
                     .scrollEdgeEffectHidden(false, for: .top)
                     .safeAreaBar(edge: .bottom, spacing: 0) { historyControls }
             } else {
                 historyList
+                    .listStyle(.plain).scrollContentBackground(.hidden)
                     .safeAreaInset(edge: .bottom, spacing: 0) { historyControls }
+                    .background(SidebarMaterial().ignoresSafeArea())
             }
         }
-        .background(SidebarMaterial().ignoresSafeArea())
     }
 
     private var historyList: some View {
@@ -342,7 +346,6 @@ import UniformTypeIdentifiers
             }
             .disabled(store.isSending)
         }
-            .listStyle(.plain).scrollContentBackground(.hidden)
             .focusable().focused($historyFocused).focusEffectDisabled()
             .background(HistoryKeyboardShortcuts(onKeyDown: handleHistoryShortcut).frame(maxWidth: .infinity, maxHeight: .infinity))
             .environment(\.defaultMinListRowHeight, 38)
@@ -686,30 +689,53 @@ import UniformTypeIdentifiers
     }
 
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    ForEach(store.messages) { message in
-                        MessageView(message: message, isStreaming: store.isSending && message.id == store.messages.last?.id,
-                                    isThinking: store.isSending && store.isThinking && message.id == store.messages.last?.id,
-                                    media: app.media, conversationURL: store.publicChatLink?.url ?? (store.isTemporary ? nil : store.selectedConversationID.flatMap { URL(string: "https://grok.com/c/\($0)") }),
-                                    retryPlaces: store.isSending ? nil : { Task { await store.loadSelectedConversation() } })
-                            .id(message.id)
+        GeometryReader { geometry in
+            let inset = max(18, (geometry.size.width - 960) / 2)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 18) {
+                        ForEach(store.messages) { message in
+                            MessageView(message: message, isStreaming: store.isSending && message.id == store.messages.last?.id,
+                                        isThinking: store.isSending && store.isThinking && message.id == store.messages.last?.id,
+                                        media: app.media, conversationURL: store.publicChatLink?.url ?? (store.isTemporary ? nil : store.selectedConversationID.flatMap { URL(string: "https://grok.com/c/\($0)") }),
+                                        retryPlaces: store.isSending ? nil : { Task { await store.loadSelectedConversation() } })
+                                .environment(\.chatScrollInset, message.role == .assistant ? horizontalScrollInset(inset) : 0)
+                                .id(message.id)
+                        }
+                        Color.clear.frame(height: 1).id("bottom")
                     }
-                    Color.clear.frame(height: 1).id("bottom")
+                    .padding(.horizontal, inset).padding(.top, 16).padding(.bottom, 14)
+                    .frame(maxWidth: .infinity)
+                    .background(TranscriptScrollObserver { followResponse = $0 })
                 }
-                .frame(maxWidth: 960).padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 14)
-                .frame(maxWidth: .infinity)
+                .onAppear { followResponse = true; proxy.scrollTo("bottom", anchor: .bottom) }
+                .onChange(of: store.messages.count) { _, _ in
+                    if followResponse { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: store.messages.last?.text) { _, _ in
+                    if store.isSending && followResponse { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: store.selectedLeafID) { _, _ in
+                    if followResponse { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: store.selectedConversationID) { previous, _ in
+                    // Receiving the first server ID is part of the reply, not navigation.
+                    if previous != nil && !store.isSending { followResponse = true; proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: store.isSending) { _, sending in
+                    if sending { followResponse = true; proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: followResponse) { _, follow in
+                    if follow { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
             }
-            .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
-            .onChange(of: store.messages.count) { _, _ in
-                if !store.isSending || followResponse { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
-            .onChange(of: store.messages.last?.text) { _, _ in
-                if store.isSending && followResponse { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
-            .onChange(of: store.selectedLeafID) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
         }
+    }
+
+
+    private func horizontalScrollInset(_ inset: CGFloat) -> CGFloat {
+        if #available(macOS 26.0, *) { return inset }
+        return 0
     }
 
     @ViewBuilder private var composer: some View {

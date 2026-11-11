@@ -10,6 +10,7 @@ import GrokUsage
 @MainActor @Observable final class UsageMonitor {
     static let shared = UsageMonitor()
     private(set) var snapshots = UsageSnapshots()
+    private(set) var chatSubscriptionName: String?
     private(set) var isRefreshing = false
     private(set) var storageFailed = false
     private(set) var buildAccounts: [BuildAccount] = []
@@ -54,6 +55,7 @@ import GrokUsage
     func setChatService(_ service: GrokService?) {
         chatGeneration = UUID()
         self.service = service
+        chatSubscriptionName = nil
         snapshots.chat = UsageSnapshot(product: .chat, status: service == nil ? .signIn : .unavailable)
         publish()
         Task { await refresh() }
@@ -78,13 +80,21 @@ import GrokUsage
         }
         let chatRevision = chatGeneration
         let buildRevision = buildGeneration
-        async let chat = fetchChat(service)
+        let chatService = service
+        async let chat = fetchChat(chatService)
         async let build = fetchBuild()
+        async let subscription = try? chatService?.subscriptionName()
         let (chatValue, buildValue) = await (chat, build)
         guard !Task.isCancelled else { return }
-        if chatRevision == chatGeneration { snapshots.chat = chatValue }
+        if chatRevision == chatGeneration {
+            snapshots.chat = chatValue
+            if chatValue.status == .signIn { chatSubscriptionName = nil }
+        }
         if buildRevision == buildGeneration { snapshots.build = buildValue }
         publish()
+        if let name = await subscription, !Task.isCancelled, chatRevision == chatGeneration, chatValue.status != .signIn {
+            chatSubscriptionName = name
+        }
     }
 
     private func fetchChat(_ service: GrokService?) async -> UsageSnapshot {

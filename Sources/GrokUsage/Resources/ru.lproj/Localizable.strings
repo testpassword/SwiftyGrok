@@ -47,9 +47,9 @@
 "Up to date" = "Данные обновлены";
 "Updated" = "Обновлено";
 "Usage is unavailable. Try refreshing." = "Лимиты недоступны. Попробуйте обновить.";
-"Weekly pool" = "Недельная квота";
+"Weekly pool" = "Недельная";
 "Widget data could not be saved. Use the complete SwiftyGrok app bundle." = "Не удалось сохранить данные виджетов. Используйте полную сборку приложения SwiftyGrok.";
 "Widgets" = "Виджеты";
 "%@ left" = "Осталось %@";
-"Remaining: %@" = "Осталось: %@";
-"Remaining: %@%%" = "Осталось: %@%%";
+"Responses remaining: %@" = "Осталось ответов: %@";
+"Responses remaining: %@%%" = "Осталось ответов: %@%%";

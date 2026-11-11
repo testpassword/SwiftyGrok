@@ -43,6 +43,7 @@ import GrokCore
         }
         .scrollIndicators(.hidden)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(ChatHorizontalScroll())
         .sheet(item: $selected) { place in PlaceDetailsView(place: place, media: media) }
     }
 }
@@ -58,6 +59,14 @@ import GrokCore
     private var coordinate: CLLocationCoordinate2D? {
         guard let latitude = place.latitude, let longitude = place.longitude else { return nil }
         return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+
+    private var phoneURL: URL? {
+        guard let phone = place.phone else { return nil }
+        let digits = phone.filter { "0123456789".contains($0) }
+        guard !digits.isEmpty else { return nil }
+        let prefix = phone.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("+") ? "+" : ""
+        return URL(string: "tel:\(prefix)\(digits)")
     }
 
     private var photoHeader: some View {
@@ -128,7 +137,9 @@ import GrokCore
                                 Spacer()
                                 if let open = place.isOpen { Text(L10n.text(open ? "Open now" : "Closed now")).foregroundStyle(open ? Color.green : Color.secondary) }
                             }
-                        }.disabled(place.hours.isEmpty)
+                        }
+                        .disclosureGroupStyle(PlaceHoursDisclosureStyle())
+                        .disabled(place.hours.isEmpty)
                     }
                     if let coordinate {
                         Map(initialPosition: .region(MKCoordinateRegion(center: coordinate,
@@ -145,7 +156,8 @@ import GrokCore
                     }
                     if let phone = place.phone {
                         LabeledContent {
-                            Text(phone).textSelection(.enabled)
+                            if let url = phoneURL { Link(phone, destination: url) }
+                            else { Text(phone).textSelection(.enabled) }
                         } label: { Label(L10n.text("Phone"), systemImage: "phone") }
                     }
                     HStack(spacing: 12) {
@@ -174,6 +186,30 @@ import GrokCore
         let item = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
         item.name = place.name
         item.openInMaps(launchOptions: [MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving])
+    }
+}
+
+@MainActor private struct PlaceHoursDisclosureStyle: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation { configuration.isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
+                        .accessibilityHidden(true)
+                    configuration.label
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(L10n.text(configuration.isExpanded ? "Expanded" : "Collapsed"))
+            if configuration.isExpanded { configuration.content }
+        }
     }
 }
 

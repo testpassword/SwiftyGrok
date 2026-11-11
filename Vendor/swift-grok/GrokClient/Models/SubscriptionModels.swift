@@ -56,14 +56,25 @@ public struct GrokSubscription {
             return "SuperGrok Heavy"
         }
         if tokens.contains(where: { $0.contains("supergrok") || ($0.contains("super") && $0.contains("grok")) }) {
-            return "SuperGrok"
+            return tokens.contains(where: { $0.contains("lite") }) ? "SuperGrok Lite" : "SuperGrok"
         }
+        if tokens.contains(where: { $0.contains("premiumplus") }) {
+            return "Premium+"
+        }
+        if tokens.contains(where: { $0.contains("premium") }) {
+            return "Premium"
+        }
+        if tokens.contains(where: { $0.contains("free") }) {
+            return "Free"
+        }
+        if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
         return "Grok"
     }
 
     private static func normalizedPlanToken(_ value: String) -> String {
         value
             .lowercased()
+            .replacingOccurrences(of: "+", with: "plus")
             .replacingOccurrences(of: #"[^a-z0-9]"#, with: "", options: .regularExpression)
     }
 }

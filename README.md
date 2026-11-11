@@ -46,7 +46,7 @@ To build a standalone app:
 
 ```bash
 cd SwiftyGrok
-bash Scripts/build-app.sh
+bash build-app.sh
 open build/SwiftyGrok.app
 ```
 
@@ -102,7 +102,7 @@ Vendor/SwiftMath/      Vendored native math renderer and fonts
 Tests/                State, protocol, rendering, and credentials tests
 Configuration/        Info.plist and app icon assets
 SwiftyGrok.xcodeproj/  Xcode app target with local package dependencies
-Scripts/build-app.sh  Test, build, and package the app
+build-app.sh          Test, build, and package the app
 ```
 
 After adding Swift files to `Sources/SwiftyGrok`, add them to the SwiftyGrok target in Xcode. The checked-in Xcode project is used directly; no project generator is required.

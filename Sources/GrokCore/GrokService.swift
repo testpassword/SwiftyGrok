@@ -37,6 +37,11 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
         return UsageWindow(id: modeID, remaining: remaining, resetAt: reset)
     }
 
+    public func subscriptionName() async throws -> String {
+        let subscriptions = try await client.subscriptionsResponse()
+        return subscriptions.currentSubscription?.displayName ?? "Free"
+    }
+
     public init(credentials: SessionCredentials, session: URLSession? = nil, placeHistory: (any PlaceHistoryLoading)? = nil) throws {
         self.placeHistory = placeHistory ?? GatewayPlaceHistory(credentials: credentials)
         let config = URLSessionConfiguration.ephemeral

@@ -68,8 +68,9 @@ import GrokCore
             Text(L10n.text("Revoking a link does not delete the original conversation."))
                 .font(.caption).foregroundStyle(.secondary)
         }
-        .padding(22).frame(width: 660, height: 500)
+        .padding(22)
         .padding(.top, SharedConversationsWindowLayout.titlebarHeight)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(appearance.theme.settingsBackground)
         .ignoresSafeArea(.container)
         .controlSize(.large)

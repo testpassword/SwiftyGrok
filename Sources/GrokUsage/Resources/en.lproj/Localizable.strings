@@ -47,9 +47,9 @@
 "Up to date" = "Up to date";
 "Updated" = "Updated";
 "Usage is unavailable. Try refreshing." = "Usage is unavailable. Try refreshing.";
-"Weekly pool" = "Weekly pool";
+"Weekly pool" = "Weekly";
 "Widget data could not be saved. Use the complete SwiftyGrok app bundle." = "Widget data could not be saved. Use the complete SwiftyGrok app bundle.";
 "Widgets" = "Widgets";
 "%@ left" = "%@ left";
-"Remaining: %@" = "Remaining: %@";
-"Remaining: %@%%" = "Remaining: %@%%";
+"Responses remaining: %@" = "Responses remaining: %@";
+"Responses remaining: %@%%" = "Responses remaining: %@%%";

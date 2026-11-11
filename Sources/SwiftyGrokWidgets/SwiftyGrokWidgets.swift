@@ -82,22 +82,16 @@ struct UsageWidgetView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Label {
-                    Text(isBuild ? "Grok Build" : "Grok")
+                Image("GrokLogo", bundle: .main)
+                    .renderingMode(.template).resizable().scaledToFit()
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(.primary)
+                    .accessibilityHidden(true)
+                if isBuild {
+                    Text("Build").font(.headline.weight(.semibold))
                         .lineLimit(1).minimumScaleFactor(0.8)
-                } icon: {
-                    Image("GrokLogo", bundle: .main)
-                        .renderingMode(.template).resizable().scaledToFit()
-                        .frame(width: 18, height: 18)
-                        .foregroundStyle(.primary)
-                        .accessibilityHidden(true)
                 }
-                .labelStyle(.titleAndIcon)
-                .font(.headline.weight(.semibold))
                 Spacer(minLength: 4)
-                Text(UsageText.text(isBuild ? "BUILD" : "CHAT"))
-                    .font(.caption2.weight(.semibold)).foregroundStyle(.blue)
-                    .fixedSize(horizontal: true, vertical: false)
             }
             if entry.snapshot.fetchedAt == nil {
                 Text(UsageText.status(entry.snapshot.status))
@@ -136,7 +130,6 @@ struct UsageWidgetView: View {
                 Spacer(minLength: 0)
             } else {
                 rows
-                if isBuild { Text(UsageText.text("Shared allowance")).font(.caption2).foregroundStyle(.secondary) }
                 Spacer(minLength: 0)
             }
             footer
@@ -182,7 +175,6 @@ struct UsageWidgetView: View {
             Text(creditBalance).font(.title2.weight(.semibold).monospacedDigit())
                 .foregroundStyle(entry.snapshot.isStale(at: entry.date) ? Color.secondary : .blue)
                 .lineLimit(1).minimumScaleFactor(0.6)
-            Text(UsageText.text("Extra usage credits")).font(.caption2).foregroundStyle(.secondary)
         }
     }
 
@@ -231,8 +223,6 @@ struct UsageWidgetView: View {
                 Text(date, style: .time)
             }
             Spacer(minLength: 0)
-            Link(destination: UsageSnapshotStore.refreshURL) { Image(systemName: "arrow.clockwise") }
-                .accessibilityLabel(UsageText.text("Refresh widgets"))
         }.font(.caption2).foregroundStyle(.secondary)
     }
 

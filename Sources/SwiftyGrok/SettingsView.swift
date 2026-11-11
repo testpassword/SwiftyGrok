@@ -68,17 +68,17 @@ import GrokUsage
                         if !appearance.quickInputFollowsSystemTransparency {
                             Text(L10n.text("Transparency"))
                             Slider(value: Binding(
-                                get: { appearance.quickInputTransparency },
-                                set: { appearance.setQuickInputTransparency($0) }
+                                get: { 1 - appearance.quickInputTransparency },
+                                set: { appearance.setQuickInputTransparency(1 - $0) }
                             ), in: 0...1, step: 0.01) {
                                 Text(L10n.text("Transparency"))
                             }
                             .labelsHidden()
                             .accessibilityValue(Text(appearance.quickInputTransparency, format: .percent.precision(.fractionLength(0))))
                             HStack {
-                                Text(L10n.text("Opaque"))
-                                Spacer()
                                 Text(L10n.text("Transparent"))
+                                Spacer()
+                                Text(L10n.text("Opaque"))
                             }
                             .font(.caption).foregroundStyle(.secondary)
                         }

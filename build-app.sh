@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")"
 
 if [[ "$(uname -s)" != Darwin ]]; then
     echo "Building the app requires macOS 14+ and Xcode 16+." >&2
