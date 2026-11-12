@@ -15,6 +15,11 @@ import UniformTypeIdentifiers
     @State private var showRename = false
     @State private var chatToDelete: ChatSummary?
     @State private var showDelete = false
+    @State private var editingChats = false
+    @State private var chatsMarkedForDeletion: Set<String> = []
+    @State private var showBulkDelete = false
+    @State private var pendingChatDeletion: [ChatSummary] = []
+    @State private var isDeletingMarkedChats = false
     @State private var shareTarget: ConversationShareTarget?
     @State private var shareAnchor: ShareAnchor?
     @State private var showCreateProject = false
@@ -109,16 +114,10 @@ import UniformTypeIdentifiers
                             ConversationSharePopover(target: target, store: store)
                         }
                         if !projectTargets.isEmpty {
-                            Menu {
-                                ForEach(projectTargets) { project in
-                                    Button { moveConversation(id, to: project.id) } label: {
-                                        Label { Text(project.name) } icon: { ProjectBadge(encoded: project.icon) }
-                                    }
-                                }
-                            } label: {
-                                Label(L10n.text("Move to project"), appSymbol: "folder.badge.plus")
+                            ProjectMoveMenuButton(conversationID: id, projects: projectTargets) { projectID in
+                                moveConversation(id, to: projectID)
                             }
-                            .help(L10n.text("Move to project"))
+                            .fixedSize()
                             .disabled(!canMoveConversation(id))
                         }
                         if let projectID = store.selectedProjectID {
@@ -131,7 +130,7 @@ import UniformTypeIdentifiers
                         Button(role: .destructive) {
                             chatToDelete = ChatSummary(id: id, title: store.title); showDelete = true
                         } label: {
-                            Label(L10n.text("Delete chat"), appSymbol: "trash")
+                            Label { Text(L10n.text("Delete chat")) } icon: { Image(nsImage: deleteChatSymbol) }
                         }
                         .help(L10n.text("Delete chat")).accessibilityLabel(L10n.text("Delete chat"))
                         .disabled(store.isSending || store.updatingConversations.contains(id))
@@ -139,7 +138,11 @@ import UniformTypeIdentifiers
                 }
             }
         }
+        .onChange(of: columnVisibility) { _, visibility in
+            if visibility == .detailOnly { stopChatEditing() }
+        }
         .focusedSceneValue(\.chatSearch, activateSearch)
+        .focusedSceneValue(\.chatSelection, chatSelectionBinding)
         .task(id: store.selectionID) { await store.loadSelectedConversation() }
         .task { await store.loadModes() }
         .task { await store.loadProfile() }
@@ -181,6 +184,12 @@ import UniformTypeIdentifiers
             Button(L10n.text("Cancel"), role: .cancel) { chatToDelete = nil }
         } message: { chat in
             Text(L10n.format("“%@” will be deleted from your Grok history.", chat.title))
+        }
+        .confirmationDialog(bulkDeleteTitle, isPresented: $showBulkDelete, titleVisibility: .visible) {
+            Button(L10n.text("Delete"), role: .destructive) { deleteMarkedChats() }
+            Button(L10n.text("Cancel"), role: .cancel) { pendingChatDeletion = [] }
+        } message: {
+            Text(bulkDeleteMessage)
         }
     }
 
@@ -266,7 +275,7 @@ import UniformTypeIdentifiers
                         .listRowSeparator(.hidden)
                 }
             }
-            .disabled(store.isSending)
+            .disabled(store.isSending || isDeletingMarkedChats)
         }
             .focusable().focused($historyFocused).focusEffectDisabled()
             .background(HistoryKeyboardShortcuts(onKeyDown: handleHistoryShortcut).frame(maxWidth: .infinity, maxHeight: .infinity))
@@ -356,31 +365,36 @@ import UniformTypeIdentifiers
 
     private func conversationRow(_ summary: ChatSummary, scope: String = "history", indentation: CGFloat = 0, projectID: String? = nil) -> some View {
         let chat = store.summary(id: summary.id) ?? summary
-        return Button { store.select(chat.id, projectID: projectID); historyFocused = true } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(chat.title).font(.system(size: 13)).lineLimit(2)
-                    if chat.isPinned {
-                        Image(appSymbol: "pin.fill").font(.system(size: 10)).foregroundStyle(.secondary)
-                            .accessibilityLabel(L10n.text("Pinned"))
-                    }
-                    if store.updatingConversations.contains(chat.id) { ProgressView().controlSize(.mini) }
+        let marked = Binding(get: { chatsMarkedForDeletion.contains(chat.id) }, set: { selected in
+            guard !isDeletingMarkedChats, !store.updatingConversations.contains(chat.id) else { return }
+            if selected { chatsMarkedForDeletion.insert(chat.id) }
+            else { chatsMarkedForDeletion.remove(chat.id) }
+        })
+        return Group {
+            if editingChats {
+                HStack(alignment: .center, spacing: 6) {
+                    Toggle(chat.title, isOn: marked)
+                        .toggleStyle(.checkbox).labelsHidden().fixedSize()
+                    conversationRowLabel(chat)
+                        .contentShape(Rectangle())
+                        .onTapGesture { marked.wrappedValue.toggle() }
+                        .accessibilityHidden(true)
                 }
-                if let date = chat.modifiedAt {
-                    if Calendar.current.isDateInToday(date) {
-                        Text(date, format: .dateTime.hour().minute()).font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text(date, format: .dateTime.day().month().year()).font(.caption).foregroundStyle(.secondary)
-                    }
+                .padding(.vertical, 7).padding(.leading, 6 + indentation).padding(.trailing, 6)
+                .background(chatsMarkedForDeletion.contains(chat.id) ? Color.accentColor.opacity(0.12) : .clear,
+                            in: RoundedRectangle(cornerRadius: 10))
+            } else {
+                Button { store.select(chat.id, projectID: projectID); historyFocused = true } label: {
+                    conversationRowLabel(chat)
+                        .padding(.vertical, 7).padding(.leading, 6 + indentation).padding(.trailing, 6)
                 }
+                .buttonStyle(HistoryRowStyle(selected: store.selectedConversationID == chat.id))
+                .accessibilityValue(store.selectedConversationID == chat.id ? L10n.text("Selected") : "")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 7).padding(.leading, 6 + indentation).padding(.trailing, 6)
         }
-            .buttonStyle(HistoryRowStyle(selected: store.selectedConversationID == chat.id))
             .overlay {
                 ConversationContextMenu(pinned: chat.isPinned,
-                                        enabled: !store.isSending && !store.updatingConversations.contains(chat.id),
+                                        enabled: !editingChats && !store.isSending && !store.updatingConversations.contains(chat.id),
                                         sharingEnabled: !store.requiresLogin && (chat.id != store.selectedConversationID ||
                                             (!store.isLoadingMessages && !store.needsReload && store.selectedLeafID != nil)),
                                         projects: projectTargets, moveEnabled: canMoveConversation(chat.id),
@@ -401,20 +415,39 @@ import UniformTypeIdentifiers
                     chatToDelete = chat; showDelete = true
                 }
             }
-            .disabled(store.updatingConversations.contains(chat.id))
+            .disabled(store.updatingConversations.contains(chat.id) || (editingChats && isDeletingMarkedChats))
             .popover(item: sharePresentation(at: .row("\(scope)-\(chat.id)")), arrowEdge: .leading) { target in
                 ConversationSharePopover(target: target, store: store)
             }
-            .accessibilityValue(store.selectedConversationID == chat.id ? L10n.text("Selected") : "")
             .id("\(scope)-\(chat.id)")
             .listRowSeparator(.hidden)
             .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 0))
             .listRowBackground(Color.clear)
     }
 
+    private func conversationRowLabel(_ chat: ChatSummary) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(chat.title).font(.system(size: 13)).lineLimit(2)
+                if chat.isPinned {
+                    Image(appSymbol: "pin.fill").font(.system(size: 10)).foregroundStyle(.secondary)
+                        .accessibilityLabel(L10n.text("Pinned"))
+                }
+                if store.updatingConversations.contains(chat.id) { ProgressView().controlSize(.mini) }
+            }
+            if let date = chat.modifiedAt {
+                if Calendar.current.isDateInToday(date) {
+                    Text(date, format: .dateTime.hour().minute()).font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text(date, format: .dateTime.day().month().year()).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func moveHistorySelection(_ offset: Int) -> KeyPress.Result {
         let chats = visibleHistoryChats
-        guard !store.isSending, !chats.isEmpty else { return .ignored }
+        guard !editingChats, !store.isSending, !chats.isEmpty else { return .ignored }
         let current = chats.firstIndex { $0.id == store.selectedConversationID } ?? (offset > 0 ? -1 : chats.count)
         let next = min(max(current + offset, 0), chats.count - 1)
         let id = chats[next].id
@@ -426,7 +459,7 @@ import UniformTypeIdentifiers
     }
 
     private func handleHistoryShortcut(_ event: NSEvent) -> Bool {
-        guard columnVisibility != .detailOnly, !store.isSending, !store.isContinuingPublicChat, !store.isTemporary, !searchFocused,
+        guard columnVisibility != .detailOnly, !editingChats, !store.isSending, !store.isContinuingPublicChat, !store.isTemporary, !searchFocused,
               !showRename, !showDelete, !app.confirmSignOut, !showCreateProject, projectToEdit == nil,
               !showDeleteProject, shareTarget == nil, !app.showLogin,
               let chat = visibleHistoryChats.first(where: { $0.id == store.selectedConversationID }),
@@ -491,32 +524,117 @@ import UniformTypeIdentifiers
     }
 
     private var historyControls: some View {
-        HStack(spacing: 8) {
-            if !searchExpanded { accountButton.transition(.opacity.combined(with: .scale(scale: 0.85))) }
-            HStack(spacing: 8) {
-                if store.isLoadingHistory { ProgressView().controlSize(.mini) }
-                else { Image(appSymbol: "magnifyingglass").foregroundStyle(.secondary) }
-                TextField(L10n.text("Search"), text: $store.search).textFieldStyle(.plain)
-                    .accessibilityLabel(L10n.text("Search chats"))
-                    .focused($searchFocused)
-                    .onExitCommand { store.search = ""; searchFocused = false }
-                if searchExpanded {
-                    Button { store.search = ""; searchFocused = false } label: { Image(appSymbol: "xmark.circle.fill").foregroundStyle(.secondary) }
-                        .buttonStyle(.plain).accessibilityLabel(L10n.text("Close search"))
+        Group {
+            if editingChats {
+                bulkDeleteButton.frame(maxWidth: .infinity, alignment: .center)
+            } else {
+                HStack(spacing: 8) {
+                    if !searchExpanded { accountButton.transition(.opacity.combined(with: .scale(scale: 0.85))) }
+                    HStack(spacing: 8) {
+                        if store.isLoadingHistory { ProgressView().controlSize(.mini) }
+                        else { Image(appSymbol: "magnifyingglass").foregroundStyle(.secondary) }
+                        TextField(L10n.text("Search"), text: $store.search).textFieldStyle(.plain)
+                            .accessibilityLabel(L10n.text("Search chats"))
+                            .focused($searchFocused)
+                            .onExitCommand { store.search = ""; searchFocused = false }
+                        if searchExpanded {
+                            Button { store.search = ""; searchFocused = false } label: { Image(appSymbol: "xmark.circle.fill").foregroundStyle(.secondary) }
+                                .buttonStyle(.plain).accessibilityLabel(L10n.text("Close search"))
+                        }
+                    }
+                    .padding(.horizontal, 13).frame(height: 42)
+                    .modifier(FloatingGlass(cornerRadius: 21))
+                    if !searchExpanded { newChatButton
+                        .help(L10n.text("New chat · ⌘N")).accessibilityLabel(L10n.text("New chat")).disabled(store.isSending)
+                        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                    }
                 }
             }
-            .padding(.horizontal, 13).frame(height: 42)
-            .modifier(FloatingGlass(cornerRadius: 21))
-            if !searchExpanded { newChatButton
-                .help(L10n.text("New chat · ⌘N")).accessibilityLabel(L10n.text("New chat")).disabled(store.isSending)
-                .transition(.opacity.combined(with: .scale(scale: 0.85)))
-            }
         }
+        .animation(.easeInOut(duration: 0.2), value: editingChats)
         .animation(.easeInOut(duration: 0.2), value: searchExpanded)
         .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 14)
     }
 
+    @ViewBuilder private var bulkDeleteButton: some View {
+        let title = markedChats.isEmpty ? L10n.text("Delete") : L10n.format("Delete (%@)", markedChats.count.formatted())
+        let button = Button(action: requestMarkedChatDeletion) {
+            Label { Text(title) } icon: { Image(nsImage: deleteChatSymbol) }
+        }
+            .controlSize(.large)
+            .buttonBorderShape(.capsule)
+            .fixedSize()
+            .disabled(markedChats.isEmpty || store.isSending || store.requiresLogin || isDeletingMarkedChats)
+        if #available(macOS 26.0, *) {
+            button.buttonStyle(.glass)
+        } else {
+            button.buttonStyle(.bordered)
+        }
+    }
+
+    private var canSelectChats: Bool {
+        !isDeletingMarkedChats && !store.isSending && !store.isContinuingPublicChat && !store.requiresLogin
+    }
+
+    private var chatSelectionBinding: Binding<Bool>? {
+        guard canSelectChats else { return nil }
+        return Binding(get: { editingChats }, set: { selected in
+            guard canSelectChats, selected != editingChats else { return }
+            toggleChatEditing()
+        })
+    }
+
+    private var markedChats: [ChatSummary] {
+        let visible = visibleHistoryChats
+        let hiddenIDs = chatsMarkedForDeletion.subtracting(visible.map(\.id))
+        return visible.filter { chatsMarkedForDeletion.contains($0.id) } + hiddenIDs.sorted().compactMap { store.summary(id: $0) }
+    }
+    private var bulkDeleteTitle: String {
+        pendingChatDeletion.count == 1 ? L10n.text("Delete chat?") : L10n.text("Delete chats?")
+    }
+    private var bulkDeleteMessage: String {
+        if pendingChatDeletion.count == 1, let chat = pendingChatDeletion.first {
+            return L10n.format("“%@” will be deleted from your Grok history.", chat.title)
+        }
+        return L10n.format("Selected chats (%@) will be deleted from your Grok history.", pendingChatDeletion.count.formatted())
+    }
+
+    private func toggleChatEditing() {
+        if editingChats { stopChatEditing() }
+        else {
+            columnVisibility = .all
+            searchFocused = false
+            showAccountLimits = false
+            editingChats = true
+        }
+    }
+
+    private func stopChatEditing() {
+        editingChats = false
+        chatsMarkedForDeletion.removeAll()
+    }
+
+    private func requestMarkedChatDeletion() {
+        guard !isDeletingMarkedChats, !markedChats.isEmpty else { return }
+        pendingChatDeletion = markedChats
+        showBulkDelete = true
+    }
+
+    private func deleteMarkedChats() {
+        let ids = pendingChatDeletion.map(\.id)
+        guard !isDeletingMarkedChats, !ids.isEmpty else { return }
+        pendingChatDeletion = []
+        isDeletingMarkedChats = true
+        Task {
+            let deleted = await store.deleteConversations(ids: ids)
+            chatsMarkedForDeletion.subtract(deleted)
+            if chatsMarkedForDeletion.isEmpty { editingChats = false }
+            isDeletingMarkedChats = false
+        }
+    }
+
     private func activateSearch() {
+        guard !editingChats else { return }
         columnVisibility = .all
         historyFocused = false
         // Focus after SwiftUI has restored the sidebar when it was hidden.
@@ -526,6 +644,22 @@ import UniformTypeIdentifiers
     private var searchExpanded: Bool { searchFocused || !store.search.isEmpty }
 
     private var projectTargets: [GrokProject] { app.projects?.items ?? [] }
+
+    /// Toolbar buttons retint template symbols, so the destructive role stays gray. This is the same red bitmap as the chat context menu.
+    private var deleteChatSymbol: NSImage {
+        let size = NSSize(width: 16, height: 16)
+        guard let symbol = AppSymbols.image("trash", accessibilityDescription: L10n.text("Delete chat")) else { return NSImage(size: size) }
+        symbol.size = size
+        let colored = NSImage(size: size, flipped: false) { rect in
+            symbol.draw(in: rect)
+            NSColor.systemRed.setFill()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        colored.isTemplate = false
+        return colored
+    }
+
     private var selectedProject: GrokProject? { app.projects?.items.first { $0.id == store.selectedProjectID } }
 
     private func canMoveConversation(_ id: String) -> Bool {
@@ -840,10 +974,18 @@ private struct ChatSearchKey: FocusedValueKey {
     typealias Value = () -> Void
 }
 
+private struct ChatSelectionKey: FocusedValueKey {
+    typealias Value = Binding<Bool>
+}
+
 extension FocusedValues {
     var chatSearch: (() -> Void)? {
         get { self[ChatSearchKey.self] }
         set { self[ChatSearchKey.self] = newValue }
+    }
+    var chatSelection: Binding<Bool>? {
+        get { self[ChatSelectionKey.self] }
+        set { self[ChatSelectionKey.self] = newValue }
     }
 }
 

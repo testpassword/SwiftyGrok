@@ -309,7 +309,7 @@ public final class ChatStore {
         }
     }
 
-    public func deleteConversation(id: String) async {
+    @discardableResult public func deleteConversation(id: String) async -> Bool {
         await updateConversation(id: id) {
             try await self.service.deleteConversation(id: id)
         } commit: {
@@ -320,6 +320,20 @@ public final class ChatStore {
             self.projectConversationMetadata[id] = nil
             self.onConversationDeleted?(id)
         }
+    }
+
+    /// Use the existing soft-delete endpoint sequentially, retaining failed and
+    /// unattempted chats so the user can retry them explicitly.
+    @discardableResult public func deleteConversations(ids: [String]) async -> Set<String> {
+        let generation = sessionGeneration
+        var seen = Set<String>(), deleted = Set<String>()
+        for id in ids where seen.insert(id).inserted {
+            guard !Task.isCancelled, generation == sessionGeneration else { break }
+            guard summary(id: id) != nil || selectedConversationID == id else { continue }
+            guard await deleteConversation(id: id) else { break }
+            deleted.insert(id)
+        }
+        return deleted
     }
 
     public func moveConversation(id: String, to projectID: String, projects: ProjectStore) async -> Bool {
@@ -385,22 +399,24 @@ public final class ChatStore {
         }
     }
 
-    private func updateConversation(id: String, request: () async throws -> Void, commit: () -> Void) async {
+    @discardableResult private func updateConversation(id: String, request: () async throws -> Void, commit: () -> Void) async -> Bool {
         guard !isSending, !requiresLogin, !temporaryConversationIDs.contains(id), !(isTemporary && id == selectedConversationID),
-              id == selectedConversationID || summary(id: id) != nil, updatingConversations.insert(id).inserted else { return }
+              id == selectedConversationID || summary(id: id) != nil, updatingConversations.insert(id).inserted else { return false }
         let generation = sessionGeneration
         defer { updatingConversations.remove(id) }
         do {
             try await request()
             try Task.checkCancellation()
-            guard generation == sessionGeneration else { return }
+            guard generation == sessionGeneration else { return false }
             // A history request started before this update must not restore stale metadata.
             historyGeneration = UUID()
             isLoadingHistory = false
             commit()
+            return true
         } catch {
-            guard !Task.isCancelled, generation == sessionGeneration else { return }
+            guard !Task.isCancelled, generation == sessionGeneration else { return false }
             presentError(error)
+            return false
         }
     }
 

@@ -9,6 +9,7 @@ struct SwiftyGrokApp: App {
     @NSApplicationDelegateAdaptor(GrokAppDelegate.self) private var delegate
     @State private var app = AppModel()
     @FocusedValue(\.chatSearch) private var searchChats
+    @FocusedBinding(\.chatSelection) private var chatSelection: Bool?
     var body: some Scene {
         Window("SwiftyGrok", id: "main") {
             RootView(app: app)
@@ -48,6 +49,10 @@ struct SwiftyGrokApp: App {
                     .disabled(searchChats == nil || app.showLogin || app.sharedConversations != nil)
             }
             CommandGroup(after: .newItem) {
+                Toggle(L10n.text("Select chats"), isOn: Binding(
+                    get: { chatSelection ?? false }, set: { chatSelection = $0 }
+                ))
+                .disabled(chatSelection == nil || app.showLogin || app.sharedConversations != nil)
                 Button { app.openSharedConversations() } label: {
                     Label(L10n.text("Shared conversations"), appSymbol: "link")
                 }

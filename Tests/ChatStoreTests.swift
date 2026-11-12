@@ -60,7 +60,11 @@ private final class FakeService: GrokServing {
         if let mutationError { throw mutationError }
         mutations.append("pin:\(id):\(pinned)")
     }
+    var deleteHook: ((String) -> Void)?
+    var deleteRequestHook: ((String) async throws -> Void)?
     func deleteConversation(id: String) async throws {
+        deleteHook?(id)
+        try await deleteRequestHook?(id)
         if let mutationError { throw mutationError }
         mutations.append("delete:\(id)")
     }
@@ -1246,6 +1250,95 @@ final class ChatStoreTests: XCTestCase {
         await store.deleteConversation(id: "chat")
         XCTAssertNil(store.selectedConversationID)
         XCTAssertEqual(service.mutations, ["delete:chat"])
+    }
+
+    @MainActor func testDeleteConversationsRemovesEachChatAndStopsOnFailure() async {
+        let service = FakeService()
+        let store = ChatStore(service: service, conversations: [
+            ChatSummary(id: "a", title: "A"),
+            ChatSummary(id: "b", title: "B"),
+            ChatSummary(id: "c", title: "C"),
+            ChatSummary(id: "d", title: "D")
+        ])
+        store.select("b")
+        var attempts: [String] = []
+        service.deleteHook = { id in
+            attempts.append(id)
+            if id == "c" { service.mutationError = URLError(.networkConnectionLost) }
+        }
+        let deleted = await store.deleteConversations(ids: ["a", "b", "a", "c", "d"])
+        XCTAssertEqual(deleted, ["a", "b"])
+        XCTAssertEqual(attempts, ["a", "b", "c"])
+        XCTAssertEqual(service.mutations, ["delete:a", "delete:b"])
+        XCTAssertEqual(store.conversations.map(\.id), ["c", "d"])
+        XCTAssertNil(store.selectedConversationID)
+        XCTAssertNotNil(store.error)
+    }
+
+    @MainActor func testBatchDeleteSkipsUnknownAndDuplicateIDs() async {
+        let service = FakeService()
+        let store = ChatStore(service: service, conversations: [ChatSummary(id: "a", title: "A"), ChatSummary(id: "b", title: "B")])
+        let deleted = await store.deleteConversations(ids: ["unknown", "a", "a", "b"])
+        XCTAssertEqual(deleted, ["a", "b"])
+        XCTAssertEqual(service.mutations, ["delete:a", "delete:b"])
+        XCTAssertTrue(store.conversations.isEmpty)
+    }
+
+    @MainActor func testCancelledBatchDoesNotStartDeletion() async {
+        let service = FakeService()
+        let store = ChatStore(service: service, conversations: [ChatSummary(id: "a", title: "A")])
+        let task = Task { await store.deleteConversations(ids: ["a"]) }
+        task.cancel()
+        let deleted = await task.value
+        XCTAssertTrue(deleted.isEmpty)
+        XCTAssertTrue(service.mutations.isEmpty)
+        XCTAssertEqual(store.conversations.map(\.id), ["a"])
+    }
+
+    @MainActor func testBatchStopsAfterSessionShutdown() async {
+        let service = FakeService()
+        let store = ChatStore(service: service, conversations: [ChatSummary(id: "a", title: "A"), ChatSummary(id: "b", title: "B")])
+        store.onConversationDeleted = { [weak store] _ in store?.shutdown() }
+        let deleted = await store.deleteConversations(ids: ["a", "b"])
+        XCTAssertEqual(deleted, ["a"])
+        XCTAssertEqual(service.mutations, ["delete:a"])
+        XCTAssertEqual(store.conversations.map(\.id), ["b"])
+    }
+
+    @MainActor func testFailedBatchDoesNotTreatHistoryRefreshAsSuccessfulDeletion() async {
+        let service = FakeService()
+        service.history = []
+        let store = ChatStore(service: service, conversations: [ChatSummary(id: "a", title: "A"), ChatSummary(id: "b", title: "B")])
+        var attempts: [String] = []
+        service.deleteRequestHook = { id in
+            attempts.append(id)
+            await store.refreshHistory()
+            throw URLError(.networkConnectionLost)
+        }
+        let deleted = await store.deleteConversations(ids: ["a", "b"])
+        XCTAssertTrue(deleted.isEmpty)
+        XCTAssertEqual(attempts, ["a"])
+        XCTAssertTrue(service.mutations.isEmpty)
+        XCTAssertNotNil(store.error)
+    }
+
+    @MainActor func testCancellationDuringBatchDoesNotDeleteFollowingChat() async {
+        let service = FakeService()
+        let store = ChatStore(service: service, conversations: [ChatSummary(id: "a", title: "A"), ChatSummary(id: "b", title: "B")])
+        var pending: CheckedContinuation<Void, Never>?
+        var attempts: [String] = []
+        service.deleteRequestHook = { id in
+            attempts.append(id)
+            await withCheckedContinuation { pending = $0 }
+        }
+        let task = Task { await store.deleteConversations(ids: ["a", "b"]) }
+        while pending == nil { await Task.yield() }
+        task.cancel()
+        pending?.resume()
+        let deleted = await task.value
+        XCTAssertTrue(deleted.isEmpty)
+        XCTAssertEqual(attempts, ["a"])
+        XCTAssertEqual(store.conversations.map(\.id), ["a", "b"])
     }
 
     @MainActor func testProfileAndConversationActions() async throws {

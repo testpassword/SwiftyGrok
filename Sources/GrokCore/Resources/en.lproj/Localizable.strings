@@ -40,6 +40,8 @@
 "Delete" = "Delete";
 "Delete chat" = "Delete chat";
 "Delete chat?" = "Delete chat?";
+"Delete chats?" = "Delete chats?";
+"Done" = "Done";
 "Expanded" = "Expanded";
 "File" = "File";
 "Follow response" = "Follow response";
@@ -99,6 +101,7 @@
 "Retry loading image" = "Retry loading image";
 "Run navigator.userAgent in the browser console. For cf_clearance, use the same User-Agent and network connection." = "Run navigator.userAgent in the browser console. For cf_clearance, use the same User-Agent and network connection.";
 "Save" = "Save";
+"Selected chats (%@) will be deleted from your Grok history." = "Selected chats (%@) will be deleted from your Grok history.";
 "Search" = "Search";
 "Search chats" = "Search chats";
 "Selected" = "Selected";
@@ -365,3 +368,6 @@
 "Umbrella" = "Umbrella";
 "Unlocked" = "Unlocked";
 "Video" = "Video";
+
+"Delete (%@)" = "Delete (%@)";
+"Select chats" = "Select chats";
