@@ -25,13 +25,13 @@ import GrokCore
                     HStack(spacing: 8) {
                         ForEach(store.draftFiles) { file in
                             HStack(spacing: 7) {
-                                Image(systemName: file.mimeType.hasPrefix("image/") ? "photo" : "doc")
+                                Image(appSymbol: file.mimeType.hasPrefix("image/") ? "photo" : "doc")
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(file.name).lineLimit(1)
                                     Text(ByteCountFormatter.string(fromByteCount: Int64(file.data.count), countStyle: .file))
                                         .font(.system(size: 10)).foregroundStyle(.secondary)
                                 }
-                                Button { store.removeFile(file.id) } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                                Button { store.removeFile(file.id) } label: { Image(appSymbol: "xmark.circle.fill").foregroundStyle(.secondary) }
                                     .buttonStyle(.plain).accessibilityLabel(L10n.format("Remove %@", file.name))
                             }
                             .font(.system(size: 12)).padding(8)
@@ -106,7 +106,7 @@ import GrokCore
                 ModePickerButton(store: store, compact: compact)
                 if store.selectedProjectID == nil && (store.selectedConversationID == nil || store.isTemporary) {
                     Toggle(isOn: Binding(get: { store.isTemporary }, set: { store.setTemporary($0) })) {
-                        if compact { Image(systemName: "eye.slash").accessibilityHidden(true) }
+                        if compact { Image(appSymbol: "grok-privacy").accessibilityHidden(true) }
                         else { Text(L10n.text("Private chat")) }
                     }
                         .toggleStyle(.switch).controlSize(.mini).font(.system(size: 12))
@@ -118,7 +118,7 @@ import GrokCore
                 DictationButton(store: store)
                 if store.isSending {
                     Button { followResponse.toggle() } label: {
-                        Image(systemName: followResponse ? "arrow.down.to.line.circle.fill" : "arrow.down.to.line.circle")
+                        Image(appSymbol: followResponse ? "arrow.down.to.line.circle.fill" : "arrow.down.to.line.circle")
                             .font(.system(size: 19)).foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain).help(L10n.text("Follow response"))
@@ -131,7 +131,7 @@ import GrokCore
                     if store.isSending { store.stopSending() }
                     else { sendMessage() }
                 } label: {
-                    Image(systemName: store.isSending ? "stop.fill" : "arrow.up")
+                    Image(appSymbol: store.isSending ? "stop.fill" : "arrow.up")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(actionForeground.opacity(store.isSending || store.canSend ? 1 : 0.45))
                         .frame(width: 34, height: 34)
@@ -173,18 +173,18 @@ extension ChatMode {
         case "lightning": return "bolt"
         case "lightbulb": return "lightbulb"
         case "rocket": return "paperplane"
-        case "connected_apps": return "square.grid.2x2"
+        case "connected_apps": return "grok-connectors"
         case "moon": return "moon"
         case "cube": return "cube"
         case "blackhole": return "circle.dotted"
         case "hammer": return "hammer"
         case "circuit_board": return "cpu"
-        case "imagine": return "photo"
+        case "imagine": return "grok-imagine"
         default:
             switch id {
             case "fast": return "bolt"
             case "expert": return "lightbulb"
-            case "heavy": return "square.grid.2x2"
+            case "heavy": return "grok-heavy-grid"
             case "auto": return "paperplane"
             default: return "slider.horizontal.3"
             }
@@ -201,10 +201,10 @@ extension ChatMode {
     var body: some View {
         Button { presented.toggle() } label: {
             HStack(spacing: 6) {
-                Image(systemName: selected?.symbolName ?? "slider.horizontal.3")
+                Image(appSymbol: selected?.symbolName ?? "slider.horizontal.3")
                 if !compact {
                     Text(selected?.name ?? L10n.text("Mode"))
-                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                    Image(appSymbol: "chevron.down").font(.system(size: 9, weight: .semibold))
                 }
             }
             .font(.system(size: 13, weight: .medium))
@@ -272,7 +272,7 @@ extension ChatMode {
     private func row(_ mode: ChatMode) -> some View {
         Button { select(mode.id) } label: {
             HStack(alignment: .center, spacing: 12) {
-                Image(systemName: mode.symbolName).font(.system(size: 18, weight: .medium))
+                Image(appSymbol: mode.symbolName).font(.system(size: 18, weight: .medium))
                     .frame(width: 38, height: 38)
                     .background(.primary.opacity(0.07), in: Circle())
                 VStack(alignment: .leading, spacing: 3) {
@@ -289,7 +289,7 @@ extension ChatMode {
                             .lineLimit(2)
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "checkmark").font(.system(size: 14, weight: .semibold))
+                Image(appSymbol: "checkmark").font(.system(size: 14, weight: .semibold))
                     .opacity(store.modeID == mode.id ? 1 : 0).frame(width: 18)
             }
             .padding(.horizontal, 12).frame(height: rowHeight(mode))

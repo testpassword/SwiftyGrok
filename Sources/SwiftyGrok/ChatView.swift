@@ -4,85 +4,6 @@ import GrokCore
 import GrokUsage
 import UniformTypeIdentifiers
 
-@MainActor private struct AccountLimitsPopover: View {
-    let name: String?
-    let email: String?
-    let modes: [ChatMode]
-    @State private var monitor = UsageMonitor.shared
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let snapshot = monitor.snapshots.chat
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(name ?? L10n.text("Profile")).font(.headline).lineLimit(1)
-                    if let email, email.caseInsensitiveCompare(name ?? "") != .orderedSame {
-                        Spacer(minLength: 0)
-                        Text(email).font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(1).truncationMode(.middle).help(email)
-                    }
-                }
-                if let subscription = monitor.chatSubscriptionName {
-                    Text(subscription).font(.subheadline.weight(.semibold)).lineLimit(1)
-                }
-                if snapshot.fetchedAt == nil {
-                    if monitor.isRefreshing {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text(UsageText.status(snapshot.status)).font(.callout).foregroundStyle(.secondary)
-                    }
-                } else {
-                    ForEach(["fast", "expert", "heavy"], id: \.self) { id in
-                        let window = snapshot.windows.first(where: { $0.id == id }) ?? UsageWindow(id: id)
-                        let mode = modes.first(where: { $0.id == id }) ?? ChatMode(id: id, name: id.capitalized)
-                        HStack(spacing: 12) {
-                            Image(systemName: mode.symbolName).font(.system(size: 18, weight: .medium))
-                                .frame(width: 38, height: 38)
-                                .background(.primary.opacity(0.07), in: Circle())
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack {
-                                    Text(UsageText.text(id.capitalized)).fontWeight(.medium)
-                                    Spacer()
-                                    Text(value(window, at: context.date)).monospacedDigit()
-                                }.font(.callout)
-                                if let percent = window.remainingPercent, !window.hasReset(at: context.date) {
-                                    ProgressView(value: percent, total: 100)
-                                }
-                                if window.hasReset(at: context.date) {
-                                    Text(UsageText.text("Awaiting refresh"))
-                                } else if let reset = window.resetAt {
-                                    Text(UsageText.format("Resets %@", reset.formatted(date: .abbreviated, time: .shortened)))
-                                } else {
-                                    Text(UsageText.text("Reset not reported"))
-                                }
-                            }
-                            .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    if snapshot.isStale(at: context.date) {
-                        Text(UsageText.text("Out of date")).font(.caption).foregroundStyle(.orange)
-                    }
-                }
-            }
-            .frame(width: 300, alignment: .leading)
-            .padding(16)
-        }
-        .task {
-            if monitor.snapshots.chat.isStale(at: Date()) { await monitor.refresh() }
-        }
-    }
-
-    private func value(_ window: UsageWindow, at date: Date) -> String {
-        guard !window.hasReset(at: date) else { return "—" }
-        if let remaining = window.remaining { return UsageText.format("Responses remaining: %@", String(remaining)) }
-        if let percent = window.remainingPercent {
-            return UsageText.format("Responses remaining: %@%%", percent.formatted(.number.precision(.fractionLength(0))))
-        }
-        return "—"
-    }
-}
-
 @MainActor struct ChatView: View {
     @Bindable var store: ChatStore
     @Bindable var app: AppModel
@@ -97,7 +18,7 @@ import UniformTypeIdentifiers
     @State private var shareTarget: ConversationShareTarget?
     @State private var shareAnchor: ShareAnchor?
     @State private var showCreateProject = false
-    @State private var projectToRename: GrokProject?
+    @State private var projectToEdit: GrokProject?
     @State private var projectToDelete: GrokProject?
     @State private var showDeleteProject = false
     @AppStorage("projects.expanded") private var projectsExpanded = true
@@ -133,14 +54,14 @@ import UniformTypeIdentifiers
         } detail: {
             VStack(spacing: 0) {
                 if let error = store.error { errorBanner(error) }
-                if let projects = app.projects, let error = projects.actionError, projectToRename == nil {
+                if let projects = app.projects, let error = projects.actionError, projectToEdit == nil {
                     HStack(spacing: 12) {
                         Text(error.message).font(.callout).textSelection(.enabled)
                         Spacer(minLength: 0)
                         if error.needsLogin {
                             Button(L10n.text("Sign in again")) { app.showLogin = true }
                         }
-                        Button { projects.clearActionError() } label: { Image(systemName: "xmark") }
+                        Button { projects.clearActionError() } label: { Image(appSymbol: "xmark") }
                             .buttonStyle(.plain).accessibilityLabel(L10n.text("Close"))
                     }.padding(12).background(.thinMaterial)
                 }
@@ -154,7 +75,7 @@ import UniformTypeIdentifiers
                     if store.isLoadingMessages { ProgressView().controlSize(.small) }
                     if let link = store.publicChatLink {
                         Button { openURL(link.url) } label: {
-                            Label(L10n.text("Browser"), systemImage: "safari")
+                            Label(L10n.text("Browser"), appSymbol: "safari")
                         }.help(L10n.text("Open in browser"))
                     }
                     if !store.isTemporary, store.branches.count > 1 {
@@ -163,16 +84,16 @@ import UniformTypeIdentifiers
                                 Button {
                                     store.selectBranch(branch.id)
                                 } label: {
-                                    Label(L10n.format("Branch %@: %@", String(index + 1), branch.label), systemImage: branch.id == store.selectedLeafID ? "checkmark" : "arrow.triangle.branch")
+                                    Label(L10n.format("Branch %@: %@", String(index + 1), branch.label), appSymbol: branch.id == store.selectedLeafID ? "checkmark" : "arrow.triangle.branch")
                                 }
                             }
-                        } label: { Label(L10n.text("Branches"), systemImage: "arrow.triangle.branch") }
+                        } label: { Label(L10n.text("Branches"), appSymbol: "arrow.triangle.branch") }
                         .disabled(store.isSending || store.isLoadingMessages)
                     }
                     if !store.isTemporary, let id = store.selectedConversationID,
                        let url = URL(string: "https://grok.com/c/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)") {
                         Button { openURL(url) } label: {
-                            Label(L10n.text("Browser"), systemImage: "safari")
+                            Label(L10n.text("Browser"), appSymbol: "safari")
                         }
                         .help(L10n.text("Open in browser")).accessibilityLabel(L10n.text("Open in browser"))
                         Button {
@@ -180,7 +101,7 @@ import UniformTypeIdentifiers
                             shareAnchor = .toolbar
                             shareTarget = ConversationShareTarget(id: id, title: store.title, responseID: responseID)
                         } label: {
-                            Label(L10n.text("Share"), systemImage: "square.and.arrow.up")
+                            Label(L10n.text("Share"), appSymbol: "square.and.arrow.up")
                         }
                         .help(L10n.text("Share")).accessibilityLabel(L10n.text("Share"))
                         .disabled(store.isSending || store.isLoadingMessages || store.needsReload || store.selectedLeafID == nil || store.updatingConversations.contains(id))
@@ -195,14 +116,14 @@ import UniformTypeIdentifiers
                                     }
                                 }
                             } label: {
-                                Label(L10n.text("Move to project"), systemImage: "folder.badge.plus")
+                                Label(L10n.text("Move to project"), appSymbol: "folder.badge.plus")
                             }
                             .help(L10n.text("Move to project"))
                             .disabled(!canMoveConversation(id))
                         }
                         if let projectID = store.selectedProjectID {
                             Button { removeConversation(id, from: projectID) } label: {
-                                Label(L10n.text("Remove from project"), systemImage: "folder.badge.minus")
+                                Label(L10n.text("Remove from project"), appSymbol: "folder.badge.minus")
                             }
                             .help(L10n.text("Remove from project"))
                             .disabled(!canMoveConversation(id))
@@ -210,7 +131,7 @@ import UniformTypeIdentifiers
                         Button(role: .destructive) {
                             chatToDelete = ChatSummary(id: id, title: store.title); showDelete = true
                         } label: {
-                            Label(L10n.text("Delete chat"), systemImage: "trash")
+                            Label(L10n.text("Delete chat"), appSymbol: "trash")
                         }
                         .help(L10n.text("Delete chat")).accessibilityLabel(L10n.text("Delete chat"))
                         .disabled(store.isSending || store.updatingConversations.contains(id))
@@ -227,10 +148,10 @@ import UniformTypeIdentifiers
             if let id = store.selectedProjectID, !ids.contains(id), app.projects?.isLoading == false { store.leaveProject(id) }
         }
         .sheet(isPresented: $showCreateProject) {
-            if let projects = app.projects { CreateProjectSheet(projects: projects) }
+            if let projects = app.projects { ProjectEditorSheet(projects: projects) }
         }
-        .sheet(item: $projectToRename) { project in
-            if let projects = app.projects { RenameProjectSheet(project: project, projects: projects) }
+        .sheet(item: $projectToEdit) { project in
+            if let projects = app.projects { ProjectEditorSheet(projects: projects, project: project) }
         }
         .task(id: store.search) {
             do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
@@ -382,7 +303,7 @@ import UniformTypeIdentifiers
                     if !expandedProjectIDs.insert(project.id).inserted { expandedProjectIDs.remove(project.id) }
                 }
             } label: {
-                Image(systemName: expandedProjectIDs.contains(project.id) ? "chevron.down" : "chevron.right")
+                Image(appSymbol: expandedProjectIDs.contains(project.id) ? "chevron.down" : "chevron.right")
                     .font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24)
             }
             .buttonStyle(.borderless)
@@ -394,7 +315,7 @@ import UniformTypeIdentifiers
         .contentShape(Rectangle())
         .overlay {
             ProjectContextMenu(enabled: !projects.isBusy) {
-                projectToRename = project
+                projectToEdit = project
             } delete: {
                 projectToDelete = project
                 showDeleteProject = true
@@ -440,7 +361,7 @@ import UniformTypeIdentifiers
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(chat.title).font(.system(size: 13)).lineLimit(2)
                     if chat.isPinned {
-                        Image(systemName: "pin.fill").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Image(appSymbol: "pin.fill").font(.system(size: 10)).foregroundStyle(.secondary)
                             .accessibilityLabel(L10n.text("Pinned"))
                     }
                     if store.updatingConversations.contains(chat.id) { ProgressView().controlSize(.mini) }
@@ -506,7 +427,7 @@ import UniformTypeIdentifiers
 
     private func handleHistoryShortcut(_ event: NSEvent) -> Bool {
         guard columnVisibility != .detailOnly, !store.isSending, !store.isContinuingPublicChat, !store.isTemporary, !searchFocused,
-              !showRename, !showDelete, !app.confirmSignOut, !showCreateProject, projectToRename == nil,
+              !showRename, !showDelete, !app.confirmSignOut, !showCreateProject, projectToEdit == nil,
               !showDeleteProject, shareTarget == nil, !app.showLogin,
               let chat = visibleHistoryChats.first(where: { $0.id == store.selectedConversationID }),
               !store.updatingConversations.contains(chat.id) else { return false }
@@ -541,17 +462,17 @@ import UniformTypeIdentifiers
         .accessibilityLabel(store.accountName ?? L10n.text("Profile"))
         .help(store.accountName ?? L10n.text("Profile"))
         .popover(isPresented: $showAccountLimits, arrowEdge: .bottom) {
-            AccountLimitsPopover(name: store.accountName, email: store.accountEmail, modes: store.modes)
+            AccountLimitsPopover(name: store.accountName, email: store.accountEmail)
         }
     }
 
     private var projectsHeader: some View {
         HStack(spacing: 8) {
-            Label(L10n.text("Projects"), systemImage: "folder")
+            Label(L10n.text("Projects"), appSymbol: "folder")
                 .labelStyle(.titleAndIcon)
                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(.primary)
             Button { showCreateProject = true } label: {
-                Image(systemName: "plus").font(.system(size: 12, weight: .medium)).frame(width: 22, height: 22)
+                Image(appSymbol: "plus").font(.system(size: 12, weight: .medium)).frame(width: 22, height: 22)
             }
             .buttonStyle(.borderless).help(L10n.text("New project"))
             .accessibilityLabel(L10n.text("New project"))
@@ -560,7 +481,7 @@ import UniformTypeIdentifiers
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) { projectsExpanded.toggle() }
             } label: {
-                Image(systemName: projectsExpanded ? "chevron.down" : "chevron.right")
+                Image(appSymbol: projectsExpanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 11, weight: .semibold)).frame(width: 24, height: 24)
             }
             .buttonStyle(.borderless)
@@ -574,13 +495,13 @@ import UniformTypeIdentifiers
             if !searchExpanded { accountButton.transition(.opacity.combined(with: .scale(scale: 0.85))) }
             HStack(spacing: 8) {
                 if store.isLoadingHistory { ProgressView().controlSize(.mini) }
-                else { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
+                else { Image(appSymbol: "magnifyingglass").foregroundStyle(.secondary) }
                 TextField(L10n.text("Search"), text: $store.search).textFieldStyle(.plain)
                     .accessibilityLabel(L10n.text("Search chats"))
                     .focused($searchFocused)
                     .onExitCommand { store.search = ""; searchFocused = false }
                 if searchExpanded {
-                    Button { store.search = ""; searchFocused = false } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    Button { store.search = ""; searchFocused = false } label: { Image(appSymbol: "xmark.circle.fill").foregroundStyle(.secondary) }
                         .buttonStyle(.plain).accessibilityLabel(L10n.text("Close search"))
                 }
             }
@@ -625,14 +546,14 @@ import UniformTypeIdentifiers
     @ViewBuilder private var newChatButton: some View {
         if #available(macOS 26.0, *) {
             Button { store.newChat() } label: {
-                Image(systemName: "square.and.pencil").font(.system(size: 18, weight: .medium))
+                Image(appSymbol: "square.and.pencil").font(.system(size: 18, weight: .medium))
                     .frame(width: 18, height: 18)
             }
             .buttonStyle(.glassProminent).buttonBorderShape(.circle).controlSize(.extraLarge)
             .tint(actionBackground).foregroundStyle(actionForeground)
         } else {
             Button { store.newChat() } label: {
-                Image(systemName: "square.and.pencil").font(.system(size: 18, weight: .medium))
+                Image(appSymbol: "square.and.pencil").font(.system(size: 18, weight: .medium))
                     .foregroundStyle(actionForeground).frame(width: 42, height: 42).background(actionBackground, in: Circle())
             }.buttonStyle(.plain)
         }
@@ -641,7 +562,7 @@ import UniformTypeIdentifiers
     @ViewBuilder private var emptyConversation: some View {
         if store.publicChatLink != nil {
             ContentUnavailableView {
-                Label(L10n.text("Public chat"), systemImage: "bubble.left.and.bubble.right")
+                Label(L10n.text("Public chat"), appSymbol: "bubble.left.and.bubble.right")
             } description: {
                 Text(L10n.text("Could not load this public chat."))
             } actions: {
@@ -649,7 +570,7 @@ import UniformTypeIdentifiers
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if selectedProject != nil && store.selectedConversationID == nil {
             VStack(spacing: 18) {
-                Image(systemName: "bubble.left").font(.system(size: 32, weight: .regular))
+                Image(appSymbol: "bubble.left").font(.system(size: 32, weight: .regular))
                     .frame(width: 88, height: 88)
                     .background(.primary.opacity(0.06), in: Circle()).accessibilityHidden(true)
                 Text(L10n.text("Start a conversation in this project"))
@@ -770,14 +691,14 @@ import UniformTypeIdentifiers
     private var continueChatLabel: some View {
         HStack(spacing: 8) {
             if store.isContinuingPublicChat { ProgressView().controlSize(.small) }
-            else { Image(systemName: "bubble.left.and.bubble.right") }
+            else { Image(appSymbol: "bubble.left.and.bubble.right") }
             Text(L10n.text("Continue chat"))
         }.font(.system(size: 14, weight: .semibold)).padding(.horizontal, 6).frame(minHeight: 26)
     }
 
     private func errorBanner(_ error: DisplayError) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+            Image(appSymbol: "exclamationmark.circle").foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 8) {
                 Text(error.message).font(.callout).textSelection(.enabled)
                 if error.systemPermission == .screenRecording { PermissionRecoveryHint() }
@@ -809,7 +730,7 @@ import UniformTypeIdentifiers
             }
             Spacer(minLength: 0)
             if !store.needsReload && !store.requiresLogin {
-                Button { store.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                Button { store.error = nil } label: { Image(appSymbol: "xmark") }.buttonStyle(.plain)
             }
         }
         .padding(14).frame(maxWidth: .infinity, alignment: .leading).background(.orange.opacity(0.08))

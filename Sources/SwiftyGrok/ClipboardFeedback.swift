@@ -24,7 +24,7 @@ import GrokCore
     func body(content: Content) -> some View {
         content.overlay(alignment: .top) {
             if visible {
-                Label(L10n.text("Copied"), systemImage: "checkmark.circle.fill")
+                Label(L10n.text("Copied"), appSymbol: "checkmark.circle.fill")
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 14).padding(.vertical, 9)
                     .modifier(FloatingGlass(cornerRadius: 20))

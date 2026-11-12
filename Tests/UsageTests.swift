@@ -3,6 +3,25 @@ import Foundation
 import GrokUsage
 
 final class UsageTests: XCTestCase {
+    func testAccountCreditsAcceptStringCentsAndPreserveProductShares() throws {
+        let data = Data(#"{"config":{"creditUsagePercent":29,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-11-17T18:06:28.580Z"},"prepaidBalance":{"val":"9007199254740993"},"productUsage":[{"product":"PRODUCT_GROK_BUILD","usagePercent":15},{"product":"PRODUCT_GROK_CHAT","usagePercent":11},{"product":"PRODUCT_GROK_IMAGINE","usagePercent":3}]}}"#.utf8)
+        let snapshot = try CreditsUsageParser.parse(data, product: .chat)
+        XCTAssertEqual(snapshot.product, .chat)
+        XCTAssertEqual(snapshot.windows.first?.usedPercent, 29)
+        XCTAssertEqual(snapshot.windows.first?.remainingPercent, 71)
+        XCTAssertEqual(snapshot.prepaidCents, 9_007_199_254_740_993)
+        XCTAssertEqual(snapshot.products.map(\.id), ["PRODUCT_GROK_BUILD", "PRODUCT_GROK_CHAT", "PRODUCT_GROK_IMAGINE"])
+        XCTAssertEqual(snapshot.products.map(\.percent), [15, 11, 3])
+        XCTAssertNotNil(snapshot.windows.first?.resetAt)
+    }
+
+    func testInvalidCreditBalanceIsNotReportedAsZero() {
+        for value in [#""invalid""#, #""9223372036854775808""#, "null", "true"] {
+            let data = Data("{\"config\":{\"creditUsagePercent\":29,\"prepaidBalance\":{\"val\":\(value)}}}".utf8)
+            XCTAssertThrowsError(try CreditsUsageParser.parse(data, product: .chat))
+        }
+    }
+
     func testSharedPercentageAndProductsDescribeOnePool() throws {
         let data = Data(#"{"config":{"creditUsagePercent":24,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2033-05-18T03:33:20Z"},"prepaidBalance":{"val":2400},"productUsage":[{"product":"GrokChat","usagePercent":4},{"product":"GrokBuild","usagePercent":20}]}}"#.utf8)
         let snapshot = try BuildUsageParser.parse(data)

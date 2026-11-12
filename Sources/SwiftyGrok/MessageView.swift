@@ -62,13 +62,13 @@ import GrokCore
                     attachments
                     if message.cardsUnavailable {
                         HStack(spacing: 8) {
-                            Label(L10n.text("Could not load response cards"), systemImage: "rectangle.stack.badge.exclamationmark")
+                            Label(L10n.text("Could not load response cards"), appSymbol: "rectangle.stack.badge.exclamationmark")
                                 .foregroundStyle(.secondary)
                             if let retryCards { Button(L10n.text("Retry"), action: retryCards) }
                         }.font(.callout)
                     }
                     if let failure = message.failure {
-                        Label(failure, systemImage: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
+                        Label(failure, appSymbol: "exclamationmark.circle").font(.callout).foregroundStyle(.orange)
                             .textSelection(.enabled)
                     }
                     if !message.sources.isEmpty {
@@ -110,7 +110,7 @@ import GrokCore
                     }
                     if !isStreaming && !message.displayMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Button(action: copyMessage) {
-                            Image(systemName: "doc.on.doc").font(.system(size: 12))
+                            Image(appSymbol: "doc.on.doc").font(.system(size: 12))
                         }
                         .buttonStyle(.plain).foregroundStyle(.tertiary)
                         .help(L10n.text("Copy response")).accessibilityLabel(L10n.text("Copy response"))
@@ -122,7 +122,7 @@ import GrokCore
         }
         .font(.system(size: 14))
         .contextMenu {
-            Button(L10n.text("Copy message"), systemImage: "doc.on.doc", action: copyMessage)
+            Button(action: copyMessage) { Label(L10n.text("Copy message"), appSymbol: "doc.on.doc") }
                 .disabled(message.text.isEmpty)
             if let date = message.createdAt {
                 Text(date, format: .dateTime.day().month().hour().minute())
@@ -174,20 +174,20 @@ import GrokCore
                 } else if let url = attachment.url ?? conversationURL {
                     Link(destination: url) {
                         HStack(spacing: 10) {
-                            Image(systemName: attachment.kind == .video ? "play.rectangle" : attachment.kind == .audio ? "waveform" : "doc")
+                            Image(appSymbol: attachment.kind == .video ? "play.rectangle" : attachment.kind == .audio ? "waveform" : "doc")
                                 .font(.system(size: 21)).foregroundStyle(.secondary)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(attachment.name).lineLimit(2)
                                 Text(attachment.url == nil ? L10n.text("Open in Grok") : L10n.text("Open")).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 8)
-                            Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
+                            Image(appSymbol: "arrow.up.right").font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(14).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Label(attachment.name, systemImage: "doc").font(.callout)
+                    Label(attachment.name, appSymbol: "doc").font(.callout)
                         .padding(10).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
                 }
             }
@@ -225,7 +225,7 @@ private struct SourcesDisclosureStyle: DisclosureGroupStyle {
                     }
                 case .tool(let tool):
                     HStack(alignment: .top, spacing: 9) {
-                        Image(systemName: tool.systemImage)
+                        Image(appSymbol: tool.systemImage)
                             .font(.system(size: 13)).foregroundStyle(.secondary)
                             .frame(width: 18).padding(.top, 2).accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 3) {
@@ -252,7 +252,7 @@ struct ClickableDisclosureStyle: DisclosureGroupStyle {
                 withAnimation(.easeInOut(duration: 0.16)) { configuration.isExpanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    Image(appSymbol: "chevron.right").font(.system(size: 10, weight: .semibold))
                         .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
                     configuration.label
                     Spacer(minLength: 0)

@@ -120,6 +120,10 @@ extension GrokClient {
         try await subscriptionsResponse().currentSubscription
     }
 
+    public func creditsResponse() async throws -> AnyCodable {
+        AnyCodable(try await sendJSON(path: "/grok/credits", method: "GET", namespace: .root))
+    }
+
     public func rateLimits(modelName: String = GrokClient.defaultModeId) async throws -> GrokRateLimit {
         let trimmedModelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedModelName = trimmedModelName.isEmpty ? GrokClient.defaultModeId : trimmedModelName

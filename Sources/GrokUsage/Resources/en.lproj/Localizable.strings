@@ -53,3 +53,17 @@
 "%@ left" = "%@ left";
 "Responses remaining: %@" = "Responses remaining: %@";
 "Responses remaining: %@%%" = "Responses remaining: %@%%";
+"%@%%" = "%@%%";
+"%@%% of total" = "%@%% of total";
+"Balance" = "Balance";
+"Build" = "Build";
+"Chat" = "Chat";
+"Included in your subscription. Renews monthly. Used before extra credits." = "Included in your subscription. Renews monthly. Used before extra credits.";
+"Included in your subscription. Renews weekly. Used before extra credits." = "Included in your subscription. Renews weekly. Used before extra credits.";
+"Included in your subscription. Used before extra credits." = "Included in your subscription. Used before extra credits.";
+"Monthly limit" = "Monthly limit";
+"Renews %@" = "Renews %@";
+"Used" = "Used";
+"Used after your included allowance is exhausted." = "Used after your included allowance is exhausted.";
+"Voice" = "Voice";
+"Weekly limit" = "Weekly limit";

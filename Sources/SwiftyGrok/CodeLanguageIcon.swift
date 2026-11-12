@@ -12,7 +12,7 @@ import SwiftUI
                     .scaledToFit()
                     .frame(width: 14, height: 14)
             } else {
-                Image(systemName: "terminal")
+                Image(appSymbol: "terminal")
             }
         }
         .accessibilityHidden(true)

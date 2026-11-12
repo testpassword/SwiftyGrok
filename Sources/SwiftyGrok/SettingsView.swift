@@ -22,7 +22,7 @@ import GrokUsage
     var body: some View {
         HStack(spacing: 0) {
             List(Category.allCases, selection: $selection) { category in
-                Label(category.title, systemImage: category.icon).tag(category)
+                Label(category.title, appSymbol: category.icon).tag(category)
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
@@ -150,7 +150,7 @@ import GrokUsage
         let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
         return Button { appearance.select(theme) } label: {
             VStack(spacing: 12) {
-                Image(systemName: theme.icon)
+                Image(appSymbol: theme.icon)
                     .font(.system(size: 32, weight: .regular))
                     .foregroundStyle(selected ? Color.primary : .secondary)
                     .frame(maxWidth: .infinity).frame(height: 84)

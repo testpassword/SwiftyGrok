@@ -1,15 +1,111 @@
 import Foundation
 import Observation
 
-/// A subset of the Lucide icon IDs accepted by Grok's project icon picker.
+/// The 64 icon IDs offered by the official project picker.
 public enum ProjectIcon: String, CaseIterable, Sendable {
-    case folder, briefcase, code, globe, lightbulb, rocket, palette, camera, music, heart, star, calendar
-    case book = "book-open"
-    case education = "graduation-cap"
+    case folder
+    case flag
+    case home
+    case star
+    case heart
+    case globe
+    case unlock
+    case smile
+    case shield
+    case bell
+    case mail
+    case phone
+    case user
+    case stethoscope
+    case calendar
+    case clock
+    case hourglass
+    case sun
+    case moon
+    case monitor
+    case umbrella
+    case leaf
+    case bug
     case science = "flask-conical"
+    case rocket
+    case plane
+    case car
+    case camera
+    case video
+    case music
+    case headphones
+    case microscope
+    case archive
+    case book = "book-open"
+    case zap
+    case wrench
+    case stickyNote = "sticky-note"
+    case scale
+    case film
+    case palette
+    case cpu
+    case calculator
     case computer = "laptop"
+    case briefcase
+    case clipboardList = "clipboard-list"
+    case building
+    case flame
+    case play
+    case database
+    case shirt
+    case gem
+    case gamepad
+    case chefHat = "chef-hat"
+    case dollarSign = "dollar-sign"
+    case tag
+    case education = "graduation-cap"
+    case pin
+    case compass
+    case code
+    case box
+    case sparkles
+    case key
+    case lightbulb
+    case bookmark
 
     public var encodedValue: String { "l:\(rawValue):lime" }
+
+    public func encodedValue(color: ProjectColor) -> String {
+        if self == .folder { return color == .inherit ? "" : "l:highlighter:\(color.rawValue)" }
+        return "l:\(rawValue):\(color.rawValue)"
+    }
+
+    public init?(serverValue: String) {
+        let aliases = ["highlighter": "folder", "diamond": "gem", "music2": "music",
+                       "code-2": "code", "laptop-2": "laptop", "building-2": "building"]
+        self.init(rawValue: aliases[serverValue] ?? serverValue)
+    }
+}
+
+public enum ProjectColor: String, CaseIterable, Sendable {
+    case inherit, blue, orange, pink, purple, teal, red, green
+
+    public init?(serverValue: String) {
+        let aliases = ["gray": "inherit", "lime": "green", "yellow": "orange"]
+        self.init(rawValue: aliases[serverValue] ?? serverValue)
+    }
+}
+
+/// Server appearance is independent of the app's curated create-project picker.
+public struct ProjectIconAppearance: Equatable, Sendable {
+    public let name: String
+    public let color: String
+
+    public init(encoded: String) {
+        let parts = encoded.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[0] == "l", !parts[1].isEmpty else {
+            name = "folder"
+            color = "inherit"
+            return
+        }
+        name = String(parts[1])
+        color = parts[2].isEmpty ? "inherit" : String(parts[2])
+    }
 }
 
 public struct GrokProject: Identifiable, Equatable, Sendable {
@@ -29,8 +125,8 @@ public struct GrokProject: Identifiable, Equatable, Sendable {
 @MainActor public protocol ProjectServing: AnyObject {
     func projects() async throws -> [GrokProject]
     func projectConversations(id: String, pageToken: String?) async throws -> HistoryPage
-    func createProject(name: String, description: String, icon: ProjectIcon) async throws -> GrokProject
-    func renameProject(id: String, name: String) async throws
+    func createProject(name: String, description: String, icon: ProjectIcon, color: ProjectColor) async throws -> GrokProject
+    func updateProject(id: String, name: String, description: String, icon: String) async throws
     func deleteProject(id: String) async throws
     func addConversationToProject(conversationID: String, projectID: String) async throws
     func removeConversationFromProject(conversationID: String, projectID: String) async throws
@@ -149,7 +245,7 @@ public enum ProjectFailure: LocalizedError {
         }
     }
 
-    public func create(name: String, description: String, icon: ProjectIcon) async -> Bool {
+    public func create(name: String, description: String, icon: ProjectIcon, color: ProjectColor = .green) async -> Bool {
         guard !isBusy else { return false }
         createError = nil
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -158,7 +254,7 @@ public enum ProjectFailure: LocalizedError {
         isCreating = true
         defer { if current == generation { isCreating = false } }
         do {
-            let project = try await service.createProject(name: name, description: description.trimmingCharacters(in: .whitespacesAndNewlines), icon: icon)
+            let project = try await service.createProject(name: name, description: description.trimmingCharacters(in: .whitespacesAndNewlines), icon: icon, color: color)
             try Task.checkCancellation()
             guard current == generation else { return false }
             guard !project.id.isEmpty else { throw ProjectFailure.invalidResponse }
@@ -175,15 +271,16 @@ public enum ProjectFailure: LocalizedError {
     public func clearCreateError() { createError = nil }
     public func clearActionError() { actionError = nil }
 
-    public func rename(id: String, name: String) async -> Bool {
+    public func edit(id: String, name: String, description: String, icon: String) async -> Bool {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isBusy, let project = items.first(where: { $0.id == id }) else { return false }
         guard !name.isEmpty else { actionError = DisplayError(ProjectFailure.missingName); return false }
+        let description = description == project.description ? description : description.trimmingCharacters(in: .whitespacesAndNewlines)
         return await update(id: id) {
-            try await self.service.renameProject(id: id, name: name)
+            try await self.service.updateProject(id: id, name: name, description: description, icon: icon)
         } commit: {
             if let index = self.items.firstIndex(where: { $0.id == id }) {
-                self.items[index] = GrokProject(id: id, name: name, description: project.description, icon: project.icon)
+                self.items[index] = GrokProject(id: id, name: name, description: description, icon: icon)
             }
         }
     }

@@ -113,7 +113,7 @@ import GrokCore
     }
 
     private func weatherIcon(_ condition: WeatherCondition, daylight: Bool = true, size: CGFloat) -> some View {
-        Image(systemName: condition.symbol(isDaylight: daylight))
+        Image(appSymbol: condition.symbol(isDaylight: daylight))
             .symbolRenderingMode(.multicolor).font(.system(size: size))
             .frame(width: size * 1.5, height: size * 1.2)
             .accessibilityLabel(condition.localizedName)
@@ -181,7 +181,7 @@ private struct ResponseCardBackground: ViewModifier {
                         withAnimation(.easeInOut(duration: 0.2)) { showAll.toggle() }
                     } label: {
                         Label(showAll ? L10n.text("Show top 5") : L10n.format("Show all teams (%@)", table.rows.count.formatted()),
-                              systemImage: showAll ? "chevron.up" : "chevron.down")
+                              appSymbol: showAll ? "chevron.up" : "chevron.down")
                     }
                     .buttonBorderShape(.capsule)
                     .modifier(ResponseCardButtonStyle())

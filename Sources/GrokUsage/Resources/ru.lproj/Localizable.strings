@@ -53,3 +53,17 @@
 "%@ left" = "Осталось %@";
 "Responses remaining: %@" = "Осталось ответов: %@";
 "Responses remaining: %@%%" = "Осталось ответов: %@%%";
+"%@%%" = "%@ %%";
+"%@%% of total" = "%@ %% от общего";
+"Balance" = "Баланс";
+"Build" = "Разработка";
+"Chat" = "Чат";
+"Included in your subscription. Renews monthly. Used before extra credits." = "Включено в подписку. Обновляется ежемесячно. Используется до расходования кредитов.";
+"Included in your subscription. Renews weekly. Used before extra credits." = "Включено в подписку. Обновляется еженедельно. Используется до расходования кредитов.";
+"Included in your subscription. Used before extra credits." = "Включено в подписку. Используется до расходования кредитов.";
+"Monthly limit" = "Месячный лимит";
+"Renews %@" = "Обновляется %@";
+"Used" = "использовано";
+"Used after your included allowance is exhausted." = "Используется после достижения лимита, включённого в подписку.";
+"Voice" = "Голос";
+"Weekly limit" = "Недельный лимит";

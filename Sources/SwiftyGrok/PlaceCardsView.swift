@@ -21,7 +21,7 @@ import GrokCore
                                 Text(place.name).font(.system(size: 15, weight: .semibold)).lineLimit(2)
                                 HStack(spacing: 5) {
                                     if let rating = place.rating {
-                                        Image(systemName: "star.fill").font(.system(size: 11))
+                                        Image(appSymbol: "star.fill").font(.system(size: 11))
                                         Text(rating.formatted(.number.precision(.fractionLength(0...1))))
                                     }
                                     if let open = place.isOpen {
@@ -80,7 +80,7 @@ import GrokCore
                     .shadow(color: .black.opacity(0.25), radius: 4)
                 if let coordinate {
                     Button { directions(to: coordinate) } label: {
-                        Label(L10n.text("Directions"), systemImage: "location")
+                        Label(L10n.text("Directions"), appSymbol: "location")
                             .font(.body.weight(.medium))
                             .padding(.horizontal, 12).padding(.vertical, 6)
                     }
@@ -124,7 +124,7 @@ import GrokCore
                                 Text(rating.formatted(.number.precision(.fractionLength(0...1)))).fontWeight(.medium)
                                 if let count = place.reviewCount { Text(L10n.format("Reviews: %@", count.formatted())).foregroundStyle(.secondary) }
                             }
-                        } label: { Label(L10n.text("Rating"), systemImage: "star") }
+                        } label: { Label(L10n.text("Rating"), appSymbol: "star") }
                     }
                     if place.isOpen != nil || !place.hours.isEmpty {
                         DisclosureGroup {
@@ -133,7 +133,7 @@ import GrokCore
                             }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8).textSelection(.enabled)
                         } label: {
                             HStack {
-                                Label(L10n.text("Hours"), systemImage: "clock")
+                                Label(L10n.text("Hours"), appSymbol: "clock")
                                 Spacer()
                                 if let open = place.isOpen { Text(L10n.text(open ? "Open now" : "Closed now")).foregroundStyle(open ? Color.green : Color.secondary) }
                             }
@@ -152,18 +152,18 @@ import GrokCore
                     if let address = place.address {
                         LabeledContent {
                             Text(address).multilineTextAlignment(.trailing).textSelection(.enabled)
-                        } label: { Label(L10n.text("Address"), systemImage: "mappin.and.ellipse") }
+                        } label: { Label(L10n.text("Address"), appSymbol: "mappin.and.ellipse") }
                     }
                     if let phone = place.phone {
                         LabeledContent {
                             if let url = phoneURL { Link(phone, destination: url) }
                             else { Text(phone).textSelection(.enabled) }
-                        } label: { Label(L10n.text("Phone"), systemImage: "phone") }
+                        } label: { Label(L10n.text("Phone"), appSymbol: "phone") }
                     }
                     HStack(spacing: 12) {
                         if let url = place.website { Link(L10n.text("Website"), destination: url).modifier(PlaceGlassButtons()) }
                         if let url = place.mapsURL {
-                            Link(destination: url) { Label(L10n.text("Open in browser"), systemImage: "safari") }
+                            Link(destination: url) { Label(L10n.text("Open in browser"), appSymbol: "safari") }
                                 .modifier(PlaceGlassButtons())
                         }
                     }.controlSize(.large)
@@ -173,7 +173,7 @@ import GrokCore
         .frame(width: 560, height: 660)
         .background(appearance.theme.settingsBackground)
         .overlay(alignment: .topLeading) {
-            Button { dismiss() } label: { Image(systemName: "xmark").frame(width: 20, height: 20) }
+            Button { dismiss() } label: { Image(appSymbol: "xmark").frame(width: 20, height: 20) }
                 .buttonBorderShape(.circle).modifier(PlaceGlassButtons())
                 .keyboardShortcut(.cancelAction)
                 .help(L10n.text("Close")).accessibilityLabel(L10n.text("Close"))
@@ -196,7 +196,7 @@ import GrokCore
                 withAnimation { configuration.isExpanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
+                    Image(appSymbol: "chevron.right")
                         .font(.system(size: 10, weight: .semibold))
                         .rotationEffect(.degrees(configuration.isExpanded ? 90 : 0))
                         .accessibilityHidden(true)
@@ -227,7 +227,7 @@ import GrokCore
                     Image(nsImage: image).resizable().scaledToFill()
                         .frame(width: geometry.size.width, height: geometry.size.height).clipped()
                 } else {
-                    Image(systemName: "mappin.and.ellipse").font(.system(size: 32))
+                    Image(appSymbol: "mappin.and.ellipse").font(.system(size: 32))
                         .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if credit, let authors = photo?.authors, !authors.isEmpty {

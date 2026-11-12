@@ -18,7 +18,7 @@ import GrokCore
         Button { presented.toggle() } label: {
             Group {
                 if store.isReadingFiles { ProgressView().controlSize(.small).frame(width: 30, height: 30) }
-                else { Image(systemName: "plus").font(.system(size: 18, weight: .medium)).frame(width: 30, height: 30) }
+                else { Image(appSymbol: "plus").font(.system(size: 18, weight: .medium)).frame(width: 30, height: 30) }
             }
             .background(.primary.opacity(0.06), in: Circle())
         }
@@ -103,7 +103,7 @@ import GrokCore
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                Image(systemName: symbol).font(.system(size: 18, weight: .medium))
+                Image(appSymbol: symbol).font(.system(size: 18, weight: .medium))
                     .frame(width: 38, height: 38)
                     .background(.primary.opacity(0.07), in: Circle())
                 Text(title).font(.system(size: 14, weight: .medium))

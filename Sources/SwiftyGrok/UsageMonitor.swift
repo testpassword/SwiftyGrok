@@ -10,6 +10,7 @@ import GrokUsage
 @MainActor @Observable final class UsageMonitor {
     static let shared = UsageMonitor()
     private(set) var snapshots = UsageSnapshots()
+    private(set) var accountUsage = UsageSnapshot(product: .chat, status: .signIn)
     private(set) var chatSubscriptionName: String?
     private(set) var isRefreshing = false
     private(set) var storageFailed = false
@@ -57,6 +58,7 @@ import GrokUsage
         self.service = service
         chatSubscriptionName = nil
         snapshots.chat = UsageSnapshot(product: .chat, status: service == nil ? .signIn : .unavailable)
+        accountUsage = UsageSnapshot(product: .chat, status: service == nil ? .signIn : .unavailable)
         publish()
         Task { await refresh() }
     }
@@ -82,18 +84,29 @@ import GrokUsage
         let buildRevision = buildGeneration
         let chatService = service
         async let chat = fetchChat(chatService)
+        async let account = fetchAccount(chatService)
         async let build = fetchBuild()
         async let subscription = try? chatService?.subscriptionName()
-        let (chatValue, buildValue) = await (chat, build)
+        let (chatValue, accountValue, buildValue) = await (chat, account, build)
         guard !Task.isCancelled else { return }
         if chatRevision == chatGeneration {
             snapshots.chat = chatValue
+            accountUsage = accountValue
             if chatValue.status == .signIn { chatSubscriptionName = nil }
         }
         if buildRevision == buildGeneration { snapshots.build = buildValue }
         publish()
         if let name = await subscription, !Task.isCancelled, chatRevision == chatGeneration, chatValue.status != .signIn {
             chatSubscriptionName = name
+        }
+    }
+
+    private func fetchAccount(_ service: GrokService?) async -> UsageSnapshot {
+        guard let service else { return .init(product: .chat, status: .signIn) }
+        do { return try await service.accountUsage() }
+        catch {
+            if DisplayError(error).needsLogin { return .init(product: .chat, status: .signIn) }
+            var cached = accountUsage; cached.status = .unavailable; return cached
         }
     }
 

@@ -292,15 +292,25 @@ final class GrokServiceTests: XCTestCase {
         XCTAssertEqual(page.nextPageToken, "more")
     }
 
-    @MainActor func testProjectRenameUsesPartialPUTAndAcceptsEmptyAcknowledgement() async throws {
+    @MainActor func testProjectEditingUsesPartialPUTAndAcceptsEmptyAcknowledgement() async throws {
         FixtureProtocol.handler = { request in
             XCTAssertEqual(request.httpMethod, "PUT")
             XCTAssertEqual(request.url?.path, "/rest/workspaces/project")
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
-            XCTAssertEqual(body, ["name": "Renamed"])
+            XCTAssertEqual(body, ["name": "Updated", "customPersonality": "New description", "icon": "l:home:pink"])
             return (204, Data())
         }
-        try await service().renameProject(id: "project", name: " Renamed \n")
+        try await service().updateProject(id: "project", name: " Updated \n", description: "New description", icon: "l:home:pink")
+    }
+
+    @MainActor func testProjectEditingCanClearDescriptionAndUseInheritedFolder() async throws {
+        FixtureProtocol.handler = { request in
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+            XCTAssertEqual(body, ["name": "Project", "customPersonality": "", "icon": ""])
+            XCTAssertEqual(request.httpMethod, "PUT")
+            return (204, Data())
+        }
+        try await service().updateProject(id: "project", name: "Project", description: "", icon: ProjectIcon.folder.encodedValue(color: .inherit))
     }
 
     @MainActor func testProjectDeletionAndChatMoveUseWorkspaceEndpoints() async throws {
@@ -355,13 +365,14 @@ final class GrokServiceTests: XCTestCase {
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             XCTAssertEqual(body["name"] as? String, "Study")
             XCTAssertEqual(body["customPersonality"] as? String, "Read papers")
-            XCTAssertEqual(body["icon"] as? String, "l:graduation-cap:lime")
+            XCTAssertEqual(body["icon"] as? String, "l:graduation-cap:blue")
             XCTAssertEqual(body["preferredModel"] as? String, "auto")
-            return (200, Data(#"{"workspace":{"workspaceId":"created","name":"Study","icon":"l:graduation-cap:lime","customPersonality":"Read papers"}}"#.utf8))
+            return (200, Data(#"{"workspace":{"workspaceId":"created","name":"Study","icon":"l:graduation-cap:blue","customPersonality":"Read papers"}}"#.utf8))
         }
-        let project = try await service().createProject(name: " Study\n", description: "Read papers", icon: .education)
+        let project = try await service().createProject(name: " Study\n", description: "Read papers", icon: .education, color: .blue)
         XCTAssertEqual(project.id, "created")
         XCTAssertEqual(project.description, "Read papers")
+        XCTAssertEqual(project.icon, "l:graduation-cap:blue")
     }
 
     @MainActor func testProjectCreationRejectsBlankNamesAndMissingServerID() async throws {
@@ -529,6 +540,32 @@ final class GrokServiceTests: XCTestCase {
             XCTFail("Missing public ID must be reported instead of producing a broken link")
         } catch {
             XCTAssertEqual(error as? GrokError, .apiError("Grok did not return a public link. Check access to the chat on grok.com before publishing again."))
+        }
+    }
+
+    @MainActor func testAccountUsageUsesTheCurrentChatSession() async throws {
+        FixtureProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "grok.com")
+            XCTAssertEqual(request.url?.path, "/rest/grok/credits")
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "sso=fixture")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            return (200, Data(#"{"config":{"creditUsagePercent":29,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-11-17T18:06:28.580Z"},"prepaidBalance":{"val":"0"},"productUsage":[{"product":"PRODUCT_GROK_BUILD","usagePercent":15},{"product":"PRODUCT_GROK_CHAT","usagePercent":11},{"product":"PRODUCT_GROK_IMAGINE","usagePercent":3}]}}"#.utf8))
+        }
+        let snapshot = try await service().accountUsage()
+        XCTAssertEqual(snapshot.product.rawValue, "chat")
+        XCTAssertEqual(snapshot.windows.first?.usedPercent, 29)
+        XCTAssertEqual(snapshot.prepaidCents, 0)
+        XCTAssertEqual(snapshot.products.map(\.percent), [15, 11, 3])
+    }
+
+    @MainActor func testAccountUsageExpirationRequiresSignIn() async throws {
+        FixtureProtocol.handler = { _ in (401, Data("{}".utf8)) }
+        do {
+            _ = try await service().accountUsage()
+            XCTFail("Expired credentials must not produce an empty allowance")
+        } catch {
+            XCTAssertTrue(DisplayError(error).needsLogin)
         }
     }
 

@@ -10,6 +10,8 @@ import XCTest
     var loadHook: (() async -> Void)?
     var receivedName: String?
     var receivedDescription: String?
+    var receivedIcon: String?
+    var receivedColor: ProjectColor?
     var mutations: [String] = []
     var mutationHook: (() async -> Void)?
     var conversationCalls: [(String, String?)] = []
@@ -28,17 +30,22 @@ import XCTest
         return items
     }
 
-    func createProject(name: String, description: String, icon: ProjectIcon) async throws -> GrokProject {
+    func createProject(name: String, description: String, icon: ProjectIcon, color: ProjectColor) async throws -> GrokProject {
         creates += 1
         receivedName = name
         receivedDescription = description
+        receivedIcon = icon.encodedValue(color: color)
+        receivedColor = color
         await createHook?()
         if let failure { throw failure }
-        return GrokProject(id: "created", name: name, description: description, icon: icon.encodedValue)
+        return GrokProject(id: "created", name: name, description: description, icon: icon.encodedValue(color: color))
     }
 
-    func renameProject(id: String, name: String) async throws {
-        mutations.append("rename:\(id):\(name)")
+    func updateProject(id: String, name: String, description: String, icon: String) async throws {
+        mutations.append("edit:\(id):\(name)")
+        receivedName = name
+        receivedDescription = description
+        receivedIcon = icon
         await mutationHook?()
         if let failure { throw failure }
     }
@@ -63,6 +70,53 @@ import XCTest
 }
 
 final class ProjectTests: XCTestCase {
+    func testOfficialPickerOptionsRoundTripWithAllColors() {
+        XCTAssertEqual(ProjectIcon.allCases.count, 64)
+        XCTAssertEqual(ProjectColor.allCases.count, 8)
+        for icon in ProjectIcon.allCases {
+            for color in ProjectColor.allCases {
+                let appearance = ProjectIconAppearance(encoded: icon.encodedValue(color: color))
+                XCTAssertEqual(ProjectIcon(serverValue: appearance.name), icon)
+                XCTAssertEqual(ProjectColor(serverValue: appearance.color), color)
+            }
+        }
+        XCTAssertEqual(ProjectIcon.folder.encodedValue(color: .inherit), "")
+        XCTAssertEqual(ProjectIcon.folder.encodedValue(color: .blue), "l:highlighter:blue")
+    }
+
+    func testLegacyProjectAppearanceMatchesCurrentPickerOptions() {
+        XCTAssertEqual(ProjectIcon(serverValue: "highlighter"), .folder)
+        XCTAssertEqual(ProjectIcon(serverValue: "diamond"), .gem)
+        XCTAssertEqual(ProjectIcon(serverValue: "music2"), .music)
+        XCTAssertEqual(ProjectColor(serverValue: "lime"), .green)
+        XCTAssertEqual(ProjectColor(serverValue: "yellow"), .orange)
+        XCTAssertEqual(ProjectColor(serverValue: "gray"), .inherit)
+        XCTAssertNil(ProjectIcon(serverValue: "future-icon"))
+        XCTAssertNil(ProjectColor(serverValue: "future-color"))
+    }
+
+    func testServerIconKeepsItsColor() {
+        let appearance = ProjectIconAppearance(encoded: "l:home:lime")
+        XCTAssertEqual(appearance.name, "home")
+        XCTAssertEqual(appearance.color, "lime")
+    }
+
+    func testServerAppearancePreservesUnknownNamesForRendering() {
+        let appearance = ProjectIconAppearance(encoded: "l:future-icon:future-color")
+        XCTAssertEqual(appearance.name, "future-icon")
+        XCTAssertEqual(appearance.color, "future-color")
+        XCTAssertEqual(ProjectIconAppearance(encoded: "l:home:").name, "home")
+        XCTAssertEqual(ProjectIconAppearance(encoded: "l:home:").color, "inherit")
+    }
+
+    func testMalformedProjectAppearanceUsesInheritedFolder() {
+        for encoded in ["", "home", "l:home", "l::green", "other:home:green", "l:home:green:extra"] {
+            let appearance = ProjectIconAppearance(encoded: encoded)
+            XCTAssertEqual(appearance.name, "folder", encoded)
+            XCTAssertEqual(appearance.color, "inherit", encoded)
+        }
+    }
+
     @MainActor func testRemoveFromProjectKeepsCacheOnFailureAndInvalidatesOnSuccess() async {
         let service = ProjectFixture()
         let store = ProjectStore(service: service)
@@ -159,19 +213,19 @@ final class ProjectTests: XCTestCase {
         XCTAssertNil(store.conversations["one"])
     }
 
-    @MainActor func testRenameKeepsProjectMetadataAndDeleteRequiresSuccess() async {
+    @MainActor func testEditingUpdatesAllProjectFieldsAndDeleteRequiresSuccess() async {
         let service = ProjectFixture()
         service.items = [GrokProject(id: "one", name: "Before", description: "Keep this", icon: "l:briefcase:blue")]
         let store = ProjectStore(service: service)
         await store.load()
-        let blank = await store.rename(id: "one", name: " \n")
+        let blank = await store.edit(id: "one", name: " \n", description: "Changed", icon: "l:home:pink")
         XCTAssertFalse(blank)
         XCTAssertTrue(service.mutations.isEmpty)
-        let renamed = await store.rename(id: "one", name: " After \n")
-        XCTAssertTrue(renamed)
+        let edited = await store.edit(id: "one", name: " After \n", description: " Changed \n", icon: "l:home:pink")
+        XCTAssertTrue(edited)
         XCTAssertEqual(store.items.first?.name, "After")
-        XCTAssertEqual(store.items.first?.description, "Keep this")
-        XCTAssertEqual(store.items.first?.icon, "l:briefcase:blue")
+        XCTAssertEqual(store.items.first?.description, "Changed")
+        XCTAssertEqual(store.items.first?.icon, "l:home:pink")
         service.failure = URLError(.notConnectedToInternet)
         let failed = await store.delete(id: "one")
         XCTAssertFalse(failed)
@@ -181,6 +235,31 @@ final class ProjectTests: XCTestCase {
         let deleted = await store.delete(id: "one")
         XCTAssertTrue(deleted)
         XCTAssertTrue(store.items.isEmpty)
+        XCTAssertNil(store.actionError)
+    }
+
+    @MainActor func testEditingKeepsOpaqueAppearanceAndConversationCacheOnFailure() async {
+        let service = ProjectFixture()
+        let original = GrokProject(id: "one", name: "Before", description: "  Existing instructions\n", icon: "l:future-icon:future-color")
+        service.items = [original]
+        let store = ProjectStore(service: service)
+        await store.load()
+        await store.loadConversations(projectID: "one")
+        service.failure = URLError(.notConnectedToInternet)
+        let failed = await store.edit(id: "one", name: "After", description: "Changed", icon: "l:home:blue")
+        XCTAssertFalse(failed)
+        XCTAssertEqual(store.items, [original])
+        XCTAssertNotNil(store.actionError)
+        service.failure = nil
+        let edited = await store.edit(id: "one", name: "After", description: original.description, icon: original.icon)
+        XCTAssertTrue(edited)
+        XCTAssertEqual(store.items.first?.name, "After")
+        XCTAssertEqual(store.items.first?.id, "one")
+        XCTAssertEqual(store.items.first?.description, original.description)
+        XCTAssertEqual(store.items.first?.icon, original.icon)
+        XCTAssertEqual(service.receivedIcon, original.icon)
+        XCTAssertEqual(service.receivedDescription, original.description)
+        XCTAssertEqual(store.conversations["one"]?.map(\.id), ["chat-one"])
         XCTAssertNil(store.actionError)
     }
 
@@ -216,12 +295,12 @@ final class ProjectTests: XCTestCase {
             if fails { service.failure = URLError(.notConnectedToInternet) }
             var release: CheckedContinuation<Void, Never>?
             service.mutationHook = { await withCheckedContinuation { release = $0 } }
-            let rename = Task { await store.rename(id: "one", name: "After") }
+            let edit = Task { await store.edit(id: "one", name: "After", description: "Updated", icon: "l:home:green") }
             while release == nil { await Task.yield() }
             store.shutdown()
             release?.resume()
-            let renamed = await rename.value
-            XCTAssertFalse(renamed)
+            let edited = await edit.value
+            XCTAssertFalse(edited)
             XCTAssertTrue(store.items.isEmpty)
             XCTAssertNil(store.actionError)
             XCTAssertFalse(store.isBusy)
@@ -236,10 +315,12 @@ final class ProjectTests: XCTestCase {
         await store.load(ifNeeded: true)
         XCTAssertEqual(service.loads, 1)
         XCTAssertEqual(store.items.count, 1)
-        let created = await store.create(name: " Study \n", description: " Notes \n", icon: .education)
+        let created = await store.create(name: " Study \n", description: " Notes \n", icon: .home, color: .pink)
         XCTAssertTrue(created)
         XCTAssertEqual(service.receivedName, "Study")
         XCTAssertEqual(service.receivedDescription, "Notes")
+        XCTAssertEqual(service.receivedIcon, "l:home:pink")
+        XCTAssertEqual(service.receivedColor, .pink)
         XCTAssertEqual(store.items.map(\.id), ["created", "one"])
     }
 

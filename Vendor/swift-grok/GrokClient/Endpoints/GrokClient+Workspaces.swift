@@ -97,6 +97,16 @@ extension GrokClient {
         _ = try await jsonObject(for: request)
     }
 
+    public func updateWorkspace(workspaceId: String, name: String, customPersonality: String, icon: String) async throws {
+        let request = try makeRequest(
+            path: try endpointPath(["workspaces", workspaceId], queryItems: []),
+            method: "PUT",
+            payload: ["name": name, "customPersonality": customPersonality, "icon": icon],
+            namespace: .root
+        )
+        _ = try await jsonObject(for: request)
+    }
+
     public func deleteWorkspace(workspaceId: String) async throws -> GrokWorkspaceMutationResponse {
         let request = try makeRequest(
             path: try endpointPath(["workspaces", workspaceId], queryItems: []),

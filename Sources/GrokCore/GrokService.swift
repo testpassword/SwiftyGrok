@@ -42,6 +42,11 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
         return subscriptions.currentSubscription?.displayName ?? "Free"
     }
 
+    public func accountUsage() async throws -> UsageSnapshot {
+        let response = try await client.creditsResponse()
+        return try CreditsUsageParser.parse(JSONSerialization.data(withJSONObject: response.value), product: .chat)
+    }
+
     public init(credentials: SessionCredentials, session: URLSession? = nil, cardHistory: (any ResponseCardHistoryLoading)? = nil) throws {
         self.cardHistory = cardHistory ?? GatewayCardHistory(credentials: credentials)
         let config = URLSessionConfiguration.ephemeral
@@ -92,21 +97,22 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
         }
     }
 
-    public func createProject(name: String, description: String, icon: ProjectIcon) async throws -> GrokProject {
+    public func createProject(name: String, description: String, icon: ProjectIcon, color: ProjectColor = .green) async throws -> GrokProject {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw ProjectFailure.missingName }
-        let result = try await client.createWorkspace(name: name, icon: icon.encodedValue, customPersonality: description, preferredModel: "auto")
+        let encodedIcon = icon.encodedValue(color: color)
+        let result = try await client.createWorkspace(name: name, icon: encodedIcon, customPersonality: description, preferredModel: "auto")
         guard let workspace = result.workspace, let id = workspace.workspaceId ?? workspace.id, !id.isEmpty else {
             throw ProjectFailure.invalidResponse
         }
         return GrokProject(id: id, name: workspace.name ?? name, description: workspace.customPersonality ?? description,
-                           icon: workspace.icon ?? icon.encodedValue)
+                           icon: workspace.icon ?? encodedIcon)
     }
 
-    public func renameProject(id: String, name: String) async throws {
+    public func updateProject(id: String, name: String, description: String, icon: String) async throws {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { throw ProjectFailure.missingName }
-        try await client.renameWorkspace(workspaceId: id, name: name)
+        try await client.updateWorkspace(workspaceId: id, name: name, customPersonality: description, icon: icon)
     }
 
     public func projectConversations(id: String, pageToken: String?) async throws -> HistoryPage {

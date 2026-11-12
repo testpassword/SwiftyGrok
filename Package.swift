@@ -16,7 +16,7 @@ var targets: [Target] = [
 ]
 #if os(macOS)
 products.append(.executable(name: "SwiftyGrok", targets: ["SwiftyGrok"]))
-targets.append(.executableTarget(name: "SwiftyGrok", dependencies: ["GrokCore"], resources: [.process("Resources")]))
+targets.append(.executableTarget(name: "SwiftyGrok", dependencies: ["GrokCore"], resources: [.process("Resources"), .copy("GrokIcons.bundle")]))
 #endif
 
 let package = Package(

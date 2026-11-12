@@ -158,7 +158,7 @@ private enum DictationError: LocalizedError, SystemPermissionError {
                 if store.isDictating, store.isTranscribing || dictation.owner !== store || dictation.startedAt == nil {
                     ProgressView().controlSize(.small)
                 } else {
-                    Image(systemName: store.isDictating ? "stop.fill" : "mic")
+                    Image(appSymbol: store.isDictating ? "stop.fill" : "mic")
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(store.isDictating ? Color.red : .primary)
                 }
@@ -182,7 +182,7 @@ private enum DictationError: LocalizedError, SystemPermissionError {
                 ProgressView().controlSize(.small)
                 Text(L10n.text("Transcribing with Grok…"))
             } else if dictation.owner === store, let startedAt = dictation.startedAt {
-                Image(systemName: "waveform").foregroundStyle(.red)
+                Image(appSymbol: "waveform").foregroundStyle(.red)
                     .symbolEffect(.pulse, options: .repeating)
                 Text(L10n.text("Recording…"))
                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -195,7 +195,7 @@ private enum DictationError: LocalizedError, SystemPermissionError {
             }
             Spacer(minLength: 0)
             Button { dictation.cancel(in: store) } label: {
-                Image(systemName: "xmark.circle.fill")
+                Image(appSymbol: "xmark.circle.fill")
             }
             .buttonStyle(.plain).help(L10n.text("Cancel dictation"))
             .accessibilityLabel(L10n.text("Cancel dictation"))

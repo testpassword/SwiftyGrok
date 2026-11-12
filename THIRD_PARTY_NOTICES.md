@@ -18,11 +18,11 @@ Local modifications:
 6. `Endpoints/GrokClient+Conversations.swift`: add partial `PUT` updates for conversation titles and starred status, using the same request format as the public Grok web client.
 7. `Endpoints/GrokClient+Conversations.swift`: publish the selected response path, retain existing team access, and obtain the public URL from sharing metadata rather than the internal share-link ID. Use an English fallback error that the app can localize into Russian.
 8. `Endpoints/GrokClient+Chat.swift`: disable Grok memory when the request is temporary. `Streaming/GrokStreamParser.swift` and `Models/ConversationModels.swift`: retain final response metadata so temporary chats can show sources and attachments without reloading saved history.
-9. `Endpoints/GrokClient+Workspaces.swift`: add a name-only PUT for project renaming, preserving other project fields. Native project actions also use the existing workspace deletion and conversation-assignment endpoints.
+9. `Endpoints/GrokClient+Workspaces.swift`: add partial PUT updates for project name, description (`customPersonality`), and icon, preserving unrelated fields. Native project actions also use the existing workspace deletion and conversation-assignment endpoints.
 10. `Endpoints/GrokClient+Conversations.swift`: optional `workspaceId` filter for paginated project chat lists, matching the public Grok frontend request schema.
 11. `Endpoints/GrokClient+Workspaces.swift`: remove a conversation's project membership with DELETE `/workspaces/{workspaceId}/conversations/{conversationId}`. New project conversations use the library's existing `workspaceIds` message option.
 12. `Endpoints/GrokClient+Conversations.swift`: optional `excludeProjects` query flag; general history uses it to exclude project conversations, while workspace-filtered lists keep them visible.
-13. Mode discovery retains `iconHint` and `badgeText`, recognizes `availability.comingSoon`, and accepts an optional locale in `/rest/modes` requests. The native client preserves disabled modes and renders their metadata in a SwiftUI popover with SF Symbols.
+13. Mode discovery retains `iconHint` and `badgeText`, recognizes `availability.comingSoon`, and accepts an optional locale in `/rest/modes` requests. The native client preserves disabled modes and renders their metadata in a SwiftUI popover with bundled Grok icons and SF Symbols for unmatched meanings.
 
 The native app and its core adapter use the library's request builder, endpoint models, HTTP error validation, NDJSON/SSE parser, and cancellable streaming transport. The vendored library retains upstream's Swift 5 language mode; it is compiled by a Swift 6 toolchain.
 
@@ -32,7 +32,13 @@ The native app and its core adapter use the library's request builder, endpoint 
 
 `Sources/SwiftyGrok/Resources/AppIconLight.icns` is the light-appearance icon supplied separately by the user as `Grok(light).icns`. It is used for the Dock, minimized-window badges, and the About panel when the selected appearance is light. The existing generated `AppIcon.icns` is used for dark and black appearances. Both variants depict Grok brand artwork owned by xAI.
 
-Workspace listing additionally preserves and submits page tokens so the native project list can load all pages. Project icon IDs and their `l:<icon>:<color>` encoding were checked against the public Grok frontend; the app uses native SF Symbols to display them.
+Workspace listing additionally preserves and submits page tokens so the native project list can load all pages. The project editor offers the official web client's 64 icon IDs and eight colors, retaining legacy icon/color values when they are not edited. Project icon IDs and their encoding were checked against the public Grok frontend; the app displays them with corresponding bundled Grok artwork and SF Symbols where the IPA has no equivalent.
+
+## Grok interface icons
+
+`Sources/SwiftyGrok/GrokIcons.bundle` contains the complete, unmodified `Assets.car` from `GrokIcons_GrokIcons.bundle` in the user-supplied Grok iOS 1.4.64 (5090) IPA. It includes 286 named resources, preserving vector glyphs, weights, image scales, and appearance variants. `IconNames.json` indexes those resources; `Source.json` records the source archive and SHA-256 digests. The resource bundle has a minimal macOS bundle manifest and contains no executable code.
+
+SwiftUI controls, project badges, and native menus use this artwork for matching actions and states. SF Symbols remain available for meanings without a corresponding original icon. The icons are loaded locally and require no network access. This artwork belongs to xAI and is not covered by this repository's MIT license.
 
 # SwiftMath
 

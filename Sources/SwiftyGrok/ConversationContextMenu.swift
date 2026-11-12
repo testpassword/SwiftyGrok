@@ -52,12 +52,7 @@ import GrokCore
                 for project in configuration.projects {
                     let target = item(project.name, symbol: "folder", action: #selector(moveChat(_:)))
                     target.representedObject = project.id
-                    let parts = project.icon.split(separator: ":")
-                    let icon = parts.count == 3 ? ProjectIcon(rawValue: String(parts[1])) ?? .folder : .folder
-                    target.image = NSImage(systemSymbolName: icon.symbol, accessibilityDescription: nil)?
-                        .withSymbolConfiguration(.init(paletteColors: [.controlAccentColor]))
-                    target.image?.isTemplate = false
-                    target.image?.size = NSSize(width: 16, height: 16)
+                    target.image = ProjectIconAppearance(encoded: project.icon).menuImage
                     target.isEnabled = configuration.moveEnabled
                     submenu.addItem(target)
                 }
@@ -95,7 +90,7 @@ import GrokCore
         private func item(_ title: String, symbol: String, action: Selector) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
-            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            item.image = AppSymbols.image(symbol, accessibilityDescription: title)
             item.image?.size = NSSize(width: 16, height: 16)
             if #available(macOS 27.0, *) { item.preferredImageVisibility = .visible }
             return item

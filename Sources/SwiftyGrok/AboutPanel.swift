@@ -7,8 +7,8 @@ import GrokCore
     static func show() {
         var options: [NSApplication.AboutPanelOptionKey: Any] = [
             .applicationName: "SwiftyGrok",
-            .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.5.3",
-            .version: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "101",
+            .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.5.4",
+            .version: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "107",
             .credits: credits
         ]
         if let icon = ApplicationIcon.current { options[.applicationIcon] = icon }

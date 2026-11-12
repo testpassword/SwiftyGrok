@@ -13,7 +13,7 @@ import GrokUsage
                 Button {
                     Task { await monitor.refreshWidgets() }
                 } label: {
-                    Label(UsageText.text("Refresh widgets"), systemImage: "arrow.clockwise")
+                    Label(UsageText.text("Refresh widgets"), appSymbol: "arrow.clockwise")
                 }
                 .disabled(monitor.isRefreshing)
                 if monitor.isRefreshing { ProgressView().controlSize(.small) }

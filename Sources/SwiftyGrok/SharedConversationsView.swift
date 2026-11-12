@@ -15,7 +15,7 @@ import GrokCore
                 Spacer()
                 if store.isLoading { ProgressView().controlSize(.small) }
                 Button { Task { await store.load() } } label: {
-                    Label(L10n.text("Refresh"), systemImage: "arrow.clockwise")
+                    Label(L10n.text("Refresh"), appSymbol: "arrow.clockwise")
                         .font(.system(size: 16, weight: .medium)).frame(width: 22, height: 22)
                 }
                 .labelStyle(.iconOnly).help(L10n.text("Refresh"))
@@ -45,7 +45,7 @@ import GrokCore
             } else if store.items.isEmpty && !store.hasMore {
                 ContentUnavailableView {
                     Label(L10n.text(store.error == nil ? "No shared conversations" : "Could not load shared conversations"),
-                          systemImage: store.error == nil ? "link" : "exclamationmark.triangle")
+                          appSymbol: store.error == nil ? "link" : "exclamationmark.triangle")
                 } description: {
                     if store.error == nil { Text(L10n.text("Public links you create will appear here.")) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -95,7 +95,7 @@ import GrokCore
                 Text(item.title).font(.system(size: 14, weight: .medium)).lineLimit(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 HStack(spacing: 10) {
-                    Label(views(item.views), systemImage: "eye")
+                    Label(views(item.views), appSymbol: "eye")
                     if let date = item.createdAt {
                         Text(date, format: .dateTime.day().month().year())
                             .help(L10n.text("Published"))
@@ -104,12 +104,12 @@ import GrokCore
             }
             HStack(spacing: 8) {
                 Button { if let url = item.url { ClipboardFeedback.shared.copy(url.absoluteString) } } label: {
-                    Label(L10n.text("Copy link"), systemImage: "doc.on.doc")
+                    Label(L10n.text("Copy link"), appSymbol: "doc.on.doc")
                         .font(.system(size: 16, weight: .medium)).frame(width: 22, height: 22)
                 }.labelStyle(.iconOnly).buttonBorderShape(.circle)
                     .help(L10n.text("Copy link")).disabled(item.url == nil)
                 Button { if let url = item.url { openURL(url) } } label: {
-                    Label(L10n.text("Open in browser"), systemImage: "safari")
+                    Label(L10n.text("Open in browser"), appSymbol: "safari")
                         .font(.system(size: 16, weight: .medium)).frame(width: 22, height: 22)
                 }.labelStyle(.iconOnly).buttonBorderShape(.circle)
                     .help(L10n.text("Open in browser")).disabled(item.url == nil)

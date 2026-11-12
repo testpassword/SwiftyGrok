@@ -14,7 +14,7 @@ import GrokCore
             if let image {
                 Image(nsImage: image).renderingMode(.original).resizable().scaledToFill()
             } else {
-                Image(systemName: "person.fill").font(.system(size: 16))
+                Image(appSymbol: "person.fill").font(.system(size: 16))
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.quaternary)
             }
@@ -39,7 +39,7 @@ import GrokCore
             if let image = icons.image(for: url) {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
-                Image(systemName: "globe").foregroundStyle(.secondary)
+                Image(appSymbol: "globe").foregroundStyle(.secondary)
             }
         }
         .frame(width: size, height: size).clipShape(RoundedRectangle(cornerRadius: 3))

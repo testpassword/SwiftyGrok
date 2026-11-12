@@ -1,0 +1,9 @@
+{
+  "source": "Grok_1.4.64_ios_decrypted.ipa",
+  "version": "1.4.64",
+  "build": "5090",
+  "ipaSHA256": "9682f39151d63a562b450ed49eb473e851caa48cb5577329749b741811853b6f",
+  "catalogPath": "Payload/GrokApp.app/GrokIcons_GrokIcons.bundle/Assets.car",
+  "catalogSHA256": "1a6cfe791047112dde76f9ced37e39387d99f97a38b8cc5dafc04edfbfc6516a",
+  "namedAssets": 286
+}

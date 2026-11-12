@@ -24,7 +24,7 @@ struct SwiftyGrokApp: App {
             }
             CommandGroup(replacing: .appSettings) {
                 Button { app.openSettings() } label: {
-                    Label(L10n.text("Settings…"), systemImage: "gearshape")
+                    Label(L10n.text("Settings…"), appSymbol: "gearshape")
                 }
                 .keyboardShortcut(",", modifiers: .command)
                 .disabled(app.showLogin || app.sharedConversations != nil)
@@ -49,7 +49,7 @@ struct SwiftyGrokApp: App {
             }
             CommandGroup(after: .newItem) {
                 Button { app.openSharedConversations() } label: {
-                    Label(L10n.text("Shared conversations"), systemImage: "link")
+                    Label(L10n.text("Shared conversations"), appSymbol: "link")
                 }
                 .disabled(app.store == nil || app.showLogin || app.isConnecting || app.sharedConversations != nil)
                 Divider()
@@ -144,7 +144,7 @@ struct SwiftyGrokApp: App {
         }
     }
     private lazy var settingsMenuIcon: NSImage? = {
-        let image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: L10n.text("Settings"))
+        let image = AppSymbols.image("gearshape", accessibilityDescription: L10n.text("Settings"))
         image?.size = NSSize(width: 16, height: 16)
         return image
     }()

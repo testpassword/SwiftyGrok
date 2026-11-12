@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 14) {
-                Image(systemName: "sparkle").font(.system(size: 30, weight: .light))
+                Image(appSymbol: "sparkle").font(.system(size: 30, weight: .light))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(L10n.text("Connect Grok")).font(.title2.bold())
                     Text(L10n.text("Sign in at grok.com, then click “Connect session”."))
@@ -25,11 +25,11 @@ import UniformTypeIdentifiers
             .padding(20)
             Divider()
             HStack {
-                Image(systemName: "lock.shield").foregroundStyle(.secondary)
+                Image(appSymbol: "lock.shield").foregroundStyle(.secondary)
                 Text(app.browser.location).font(.caption).lineLimit(1).textSelection(.enabled)
                 Spacer()
                 if app.browser.isLoading { ProgressView().controlSize(.small) }
-                Button { app.browser.reload() } label: { Image(systemName: "arrow.clockwise") }
+                Button { app.browser.reload() } label: { Image(appSymbol: "arrow.clockwise") }
                     .help(L10n.text("Reload sign-in page"))
             }
             .padding(.horizontal, 20).padding(.vertical, 8)

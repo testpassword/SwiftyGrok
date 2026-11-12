@@ -97,7 +97,7 @@ private extension EnvironmentValues {
                 Spacer()
                 Button {
                     ClipboardFeedback.shared.copy(String(block.text.characters))
-                } label: { Image(systemName: "doc.on.doc").font(.caption) }
+                } label: { Image(appSymbol: "doc.on.doc").font(.caption) }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
                 .help(L10n.text("Copy code")).accessibilityLabel(L10n.text("Copy code"))
             }
@@ -235,7 +235,7 @@ private extension EnvironmentValues {
         var result = Text("")
         for (url, range) in source.runs[\.link] {
             if let url, ["https", "http"].contains(url.scheme ?? "") {
-                let icon = icons.image(for: url) ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)!
+                let icon = icons.image(for: url) ?? AppSymbols.image("globe", accessibilityDescription: nil)!
                 result = result + Text(Image(nsImage: icon)).font(.system(size: 12)).baselineOffset(-3) + Text(" ")
             }
             let part = AttributedString(source[range])
@@ -283,9 +283,9 @@ private extension EnvironmentValues {
             .frame(height: rendered.image.size.height + 16)
             .accessibilityLabel(expression.latex)
             .contextMenu {
-                Button(L10n.text("Copy LaTeX"), systemImage: "doc.on.doc") {
+                Button {
                     ClipboardFeedback.shared.copy(expression.latex)
-                }
+                } label: { Label(L10n.text("Copy LaTeX"), appSymbol: "doc.on.doc") }
             }
         } else {
             Text(expression.original).font(.system(size: 14, design: .monospaced)).textSelection(.enabled)
@@ -339,12 +339,12 @@ private enum CodeColors {
                 if presentation == .generated {
                     VStack(spacing: 0) {
                         HStack {
-                            Label("Imagine", systemImage: "sparkles")
+                            Label("Imagine", appSymbol: "sparkles")
                                 .font(.system(size: 14, weight: .medium))
                                 .labelStyle(.titleAndIcon)
                             Spacer()
                             Button(action: showPreview) {
-                                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 13))
+                                Image(appSymbol: "arrow.up.left.and.arrow.down.right").font(.system(size: 13))
                             }
                             .buttonStyle(.plain).disabled(imageData == nil)
                             .accessibilityLabel(L10n.text("Preview Imagine"))
@@ -396,7 +396,7 @@ private enum CodeColors {
                 .help(L10n.text("Quick Look"))
         } else if failed {
             Button { loadAttempt += 1 } label: {
-                Label(L10n.text("Retry loading image"), systemImage: "arrow.clockwise")
+                Label(L10n.text("Retry loading image"), appSymbol: "arrow.clockwise")
                     .padding(16).frame(maxWidth: .infinity, alignment: .leading)
                     .background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
             }

@@ -1,0 +1,8 @@
+Original interface artwork extracted from the user-supplied
+Grok iOS 1.4.64 (5090) IPA, GrokIcons_GrokIcons.bundle/Assets.car.
+
+This artwork belongs to xAI and is not covered by SwiftyGrok's MIT license.
+SwiftyGrok is an independent, unofficial client.
+
+The compiled catalog is unmodified. IconNames.json indexes its named assets;
+Source.json records the archive and catalog SHA-256 digests.

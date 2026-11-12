@@ -74,7 +74,7 @@ struct ConversationShareTarget: Identifiable {
             HStack(spacing: 12) {
                 Group {
                     if isBusy { ProgressView().controlSize(.small) }
-                    else { Image(systemName: symbol).font(.system(size: 18, weight: .medium)) }
+                    else { Image(appSymbol: symbol).font(.system(size: 18, weight: .medium)) }
                 }
                 .frame(width: 38, height: 38)
                 .background(.primary.opacity(0.07), in: Circle())
