@@ -320,11 +320,14 @@ private enum CodeColors {
 }
 
 @MainActor struct MessageImage: View {
-    enum Presentation { case regular, user, generated }
+    enum Presentation { case regular, user, generated, gallery }
     let url: URL
     let name: String
     let media: MessageMediaLoader?
     var presentation: Presentation = .regular
+    var fallbackURL: URL? = nil
+    var maximumHeight: CGFloat = 420
+    var source: MessageSource? = nil
     @State private var image: NSImage?
     @State private var imageData: Data?
     @State private var failed = false
@@ -362,7 +365,7 @@ private enum CodeColors {
             }
             if let previewError { Text(previewError).font(.caption).foregroundStyle(.secondary) }
         }
-        .frame(minWidth: 0, maxWidth: .infinity, alignment: presentation == .user ? .trailing : .leading)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: presentation == .user ? .trailing : presentation == .gallery ? .center : .leading)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { availableWidth = $0 }
         .quickLookPreview($previewURL)
         .onChange(of: previewURL) { old, new in
@@ -376,13 +379,21 @@ private enum CodeColors {
             image = nil; imageData = nil; failed = false
             do {
                 guard let media else { throw URLError(.unsupportedURL) }
-                let data = try await media.data(for: url)
-                try Task.checkCancellation()
-                guard let loaded = NSImage(data: data), loaded.size.width > 0, loaded.size.height > 0 else {
-                    throw URLError(.cannotDecodeContentData)
+                var candidates = [url]
+                if let fallbackURL, fallbackURL != url { candidates.append(fallbackURL) }
+                for candidate in candidates {
+                    do {
+                        let data = try await media.data(for: candidate)
+                        try Task.checkCancellation()
+                        guard let loaded = NSImage(data: data), loaded.size.width > 0, loaded.size.height > 0 else {
+                            throw URLError(.cannotDecodeContentData)
+                        }
+                        imageData = data
+                        image = loaded
+                        break
+                    } catch { try Task.checkCancellation() }
                 }
-                imageData = data
-                image = loaded
+                if image == nil { failed = true }
             } catch { if !Task.isCancelled { failed = true } }
         }
     }
@@ -393,6 +404,7 @@ private enum CodeColors {
                                name: name, onOpen: showPreview)
                 .frame(width: displaySize(image).width, height: displaySize(image).height)
                 .clipShape(RoundedRectangle(cornerRadius: presentation == .user ? 12 : 16))
+                .overlay(alignment: .topTrailing) { sourceBadge.padding(10) }
                 .help(L10n.text("Quick Look"))
         } else if failed {
             Button { loadAttempt += 1 } label: {
@@ -406,10 +418,26 @@ private enum CodeColors {
         }
     }
 
+    @ViewBuilder private var sourceBadge: some View {
+        if let source {
+            let link = Link(destination: source.url) {
+                HStack(spacing: 6) {
+                    SiteIcon(url: source.url, size: 14)
+                    Text(source.title).lineLimit(1)
+                }
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(.primary)
+            }
+                .controlSize(.small).buttonBorderShape(.capsule)
+                .help(L10n.text("Open in browser"))
+            if #available(macOS 26.0, *) { link.buttonStyle(.glass) }
+            else { link.buttonStyle(.bordered) }
+        }
+    }
+
     private func displaySize(_ image: NSImage) -> CGSize {
         let ratio = image.size.width / image.size.height
         let scale: CGFloat = presentation == .user ? 0.5 : 1
-        let width = max(1, min(max(1, availableWidth - (presentation == .generated ? 20 : 0)) * scale, 420 * scale * ratio))
+        let width = max(1, min(max(1, availableWidth - (presentation == .generated ? 20 : 0)) * scale, maximumHeight * scale * ratio))
         return CGSize(width: width, height: width / ratio)
     }
 

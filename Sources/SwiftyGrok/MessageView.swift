@@ -138,6 +138,7 @@ import GrokCore
                 switch block {
                 case .text(let text): AssistantTextContent(text: text, sources: message.sources, media: media)
                 case .gallery(let gallery): PlaceCardsView(gallery: gallery, media: media)
+                case .images(let gallery): SearchedImageGalleryView(gallery: gallery, media: media).id(gallery.id)
                 case .weather(let card): WeatherCardView(card: card).id(card.id)
                 case .standings(let card): SportsStandingsCardView(card: card).id(card.id)
                 }

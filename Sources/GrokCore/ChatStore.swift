@@ -718,6 +718,7 @@ public final class ChatStore {
                         if let reasoning = event.reasoning { messages[index].reasoning = reasoning }
                         else if event.isThinking { messages[index].reasoning = (messages[index].reasoning ?? "") + event.text }
                         if let duration = event.reasoningDuration { messages[index].reasoningDuration = duration }
+                        if event.isFinal { messages[index].contentBlocks = event.contentBlocks }
                     }
                     if event.isFinal { finalReceived = true; finalEvent = event; break }
                 }
@@ -735,7 +736,8 @@ public final class ChatStore {
                     // acknowledges the response ID used as the next turn's parent.
                     messages[index] = ChatMessage(id: serverResponseID, parentID: userID, role: .assistant, text: finalEvent.text,
                         createdAt: Date(), sources: finalEvent.sources, attachments: finalEvent.attachments,
-                        reasoning: finalEvent.reasoning ?? messages[index].reasoning, reasoningDuration: finalEvent.reasoningDuration ?? messages[index].reasoningDuration, failure: finalEvent.failure)
+                        reasoning: finalEvent.reasoning ?? messages[index].reasoning, reasoningDuration: finalEvent.reasoningDuration ?? messages[index].reasoningDuration, failure: finalEvent.failure,
+                        contentBlocks: finalEvent.contentBlocks)
                     needsReload = false
                 } else {
                     // Reconcile server IDs and topology before allowing another turn.

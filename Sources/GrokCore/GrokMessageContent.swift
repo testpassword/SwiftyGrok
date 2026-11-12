@@ -29,9 +29,11 @@ public struct GrokMessageContent {
     public let reasoning: String?
     public let reasoningDuration: TimeInterval?
     public let failure: String?
+    private let searchedImages: [String: SearchedImage]
 
     public init(_ metadata: [String: AnyCodable]) {
         let json = metadata.mapValues { Self.unwrap($0) }
+        searchedImages = SearchedImageContent.images(json["cardAttachmentsJson"])
         var sources: [MessageSource] = []
         for key in ["webSearchResults", "citedWebSearchResults"] {
             for (index, item) in Self.array(json[key]).enumerated() {
@@ -96,6 +98,12 @@ public struct GrokMessageContent {
             return (value as? [String: Any]).flatMap { Self.string($0, ["message", "error", "description"]) }
         }
         failure = errors.isEmpty ? nil : errors.joined(separator: "\n")
+    }
+
+    public func contentBlocks(in text: String, merging blocks: [ResponseContentBlock] = []) -> [ResponseContentBlock] {
+        guard !searchedImages.isEmpty else { return blocks }
+        let result = SearchedImageContent.inserting(in: blocks.isEmpty ? [.text(text)] : blocks, images: searchedImages)
+        return result.contains(where: { if case .images = $0 { return true }; return false }) ? result : blocks
     }
 
     public static func url(_ value: String?) -> URL? {

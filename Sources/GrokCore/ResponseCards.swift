@@ -4,6 +4,7 @@ import GrokClient
 public enum ResponseContentBlock: Equatable, Sendable {
     case text(String)
     case gallery(PlaceGallery)
+    case images(SearchedImageGallery)
     case weather(WeatherCard)
     case standings(SportsStandingsCard)
 
@@ -11,6 +12,7 @@ public enum ResponseContentBlock: Equatable, Sendable {
         switch self {
         case .text: return nil
         case .gallery(let card): return "places-" + card.id
+        case .images(let card): return "images-" + card.id
         case .weather(let card): return "weather-" + card.id
         case .standings(let card): return "sports-" + card.id
         }

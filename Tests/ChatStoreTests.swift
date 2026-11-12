@@ -1066,12 +1066,14 @@ final class ChatStoreTests: XCTestCase {
         let store = ChatStore(service: service, conversations: service.history)
         store.setTemporary(true)
         let source = MessageSource(id: "source", title: "Source", url: URL(string: "https://example.com")!)
-        service.events = [ReplyEvent(conversationID: "private", responseID: "answer-1", text: "One", isFinal: true, sources: [source])]
+        let imageBlocks = GrokMessageContent(SearchedImageFixtures.metadata).contentBlocks(in: SearchedImageFixtures.text)
+        service.events = [ReplyEvent(conversationID: "private", responseID: "answer-1", text: "One", isFinal: true, sources: [source], contentBlocks: imageBlocks)]
         store.draft = "Secret one"
         store.send()
         await store.waitForSend()
         XCTAssertEqual(store.title, L10n.text("Private conversation"))
         XCTAssertEqual(store.messages.last?.sources, [source])
+        XCTAssertEqual(store.messages.last?.contentBlocks, imageBlocks)
         XCTAssertEqual(store.selectedLeafID, "answer-1")
         XCTAssertFalse(store.needsReload)
         service.events = [ReplyEvent(conversationID: "private", responseID: "answer-2", text: "Two", isFinal: true)]

@@ -194,7 +194,7 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
             messages.append(ChatMessage(id: response.responseId, parentID: parent, role: role, text: response.message,
                 createdAt: GrokDate.parse(response.createTime), sources: content.sources,
                 attachments: try await resolveAttachments(content.attachments), reasoning: content.reasoning,
-                reasoningDuration: content.reasoningDuration, failure: content.failure))
+                reasoningDuration: content.reasoningDuration, failure: content.failure, contentBlocks: content.contentBlocks(in: response.message)))
         }
         let thread = try ChatThread(responses: messages)
         var reached = Set<String>()
@@ -257,7 +257,8 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
             let attachments = try await resolveAttachments(content.attachments)
             messages.append(ChatMessage(id: response.responseId, parentID: parent,
                                role: role, text: response.message, createdAt: GrokDate.parse(response.createTime),
-                               sources: content.sources, attachments: attachments, reasoning: content.reasoning, reasoningDuration: content.reasoningDuration, failure: content.failure))
+                               sources: content.sources, attachments: attachments, reasoning: content.reasoning, reasoningDuration: content.reasoningDuration, failure: content.failure,
+                               contentBlocks: content.contentBlocks(in: response.message)))
         }
         let candidates = responses.filter { ResponseCardContent.needsHistory($0.richContent) }.map(\.responseId)
         let missing = candidates.filter { cardCache[$0] == nil }
@@ -275,7 +276,8 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
         }
         for index in messages.indices where candidates.contains(messages[index].id) {
             if let cards = cardCache[messages[index].id] {
-                messages[index].contentBlocks = cards.blocks(matching: messages[index].text)
+                let content = GrokMessageContent(byID[messages[index].id]?.richContent ?? [:])
+                messages[index].contentBlocks = content.contentBlocks(in: messages[index].text, merging: cards.blocks(matching: messages[index].text))
             } else { messages[index].cardsUnavailable = cardsFailed }
         }
         return try ChatThread(responses: messages)
@@ -346,7 +348,8 @@ public final class GrokService: GrokServing, ProjectServing, SharedConversationS
                         let attachments = temporary ? try await resolveAttachments(content.attachments) : content.attachments
                         continuation.yield(ReplyEvent(conversationID: event.conversationId, responseID: event.responseId,
                                                       text: event.message, isThinking: event.isThinking, isFinal: event.isFinal,
-                                                      sources: content.sources, attachments: attachments, reasoning: content.reasoning, reasoningDuration: content.reasoningDuration, failure: content.failure))
+                                                      sources: content.sources, attachments: attachments, reasoning: content.reasoning, reasoningDuration: content.reasoningDuration, failure: content.failure,
+                                                      contentBlocks: event.isFinal ? content.contentBlocks(in: event.message) : []))
                     }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }

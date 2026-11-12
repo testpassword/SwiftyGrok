@@ -37,6 +37,39 @@ private final class FixtureProtocol: URLProtocol {
 }
 
 final class GrokServiceTests: XCTestCase {
+    @MainActor func testSearchedImageGalleryLoadsFromRESTWithoutGateway() async throws {
+        FixtureProtocol.handler = { request in
+            if request.url!.path.hasSuffix("response-node") {
+                return (200, Data(#"{"responseNodes":[{"responseId":"answer","sender":"assistant"}]}"#.utf8))
+            }
+            let answer: [String: Any] = ["responseId": "answer", "sender": "assistant", "message": SearchedImageFixtures.text,
+                "cardAttachmentsJson": [SearchedImageFixtures.card("one"), SearchedImageFixtures.card("two")]]
+            return (200, try JSONSerialization.data(withJSONObject: ["responses": [answer]]))
+        }
+        let gateway = StubCardHistory()
+        let thread = try await service(cardHistory: gateway).thread(id: "chat")
+        let answer = try XCTUnwrap(try thread.path().last)
+        XCTAssertEqual(SearchedImageFixtures.galleries(answer.contentBlocks).first?.images.count, 2)
+        XCTAssertEqual(answer.text, SearchedImageFixtures.text)
+        XCTAssertFalse(answer.cardsUnavailable)
+        XCTAssertTrue(gateway.calls.isEmpty)
+    }
+
+    @MainActor func testTemporaryFinalResponseIncludesSearchedImageGallery() async throws {
+        FixtureProtocol.handler = { _ in
+            let model: [String: Any] = ["responseId": "answer", "message": SearchedImageFixtures.text,
+                "cardAttachmentsJson": [SearchedImageFixtures.card("one"), SearchedImageFixtures.card("two")]]
+            let json: [String: Any] = ["result": ["conversation": ["conversationId": "private"], "response": ["modelResponse": model]]]
+            var data = try JSONSerialization.data(withJSONObject: json)
+            data.append(10)
+            return (200, data)
+        }
+        let stream = try await service().reply(conversationID: nil, parentID: nil, text: "Photos", modeID: "fast", temporary: true, fileIDs: [])
+        var final: ReplyEvent?
+        for try await event in stream where event.isFinal { final = event }
+        XCTAssertEqual(SearchedImageFixtures.galleries(try XCTUnwrap(final).contentBlocks).first?.images.count, 2)
+    }
+
     @MainActor func testPlaceCardsAreHydratedAndCachedWithoutChangingThreadTopology() async throws {
         FixtureProtocol.handler = placeThreadFixture
         let places = StubCardHistory()

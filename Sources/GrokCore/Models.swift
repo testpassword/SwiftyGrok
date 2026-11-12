@@ -68,7 +68,8 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
     public var cardsUnavailable = false
 
     public init(id: String, parentID: String? = nil, role: Role, text: String, createdAt: Date? = nil,
-                sources: [MessageSource] = [], attachments: [MessageAttachment] = [], reasoning: String? = nil, reasoningDuration: TimeInterval? = nil, failure: String? = nil) {
+                sources: [MessageSource] = [], attachments: [MessageAttachment] = [], reasoning: String? = nil, reasoningDuration: TimeInterval? = nil, failure: String? = nil,
+                contentBlocks: [ResponseContentBlock] = []) {
         self.id = id
         self.parentID = parentID?.isEmpty == false ? parentID : nil
         self.role = role
@@ -79,6 +80,7 @@ public struct ChatMessage: Identifiable, Equatable, Sendable {
         self.reasoning = reasoning
         self.reasoningDuration = reasoningDuration
         self.failure = failure
+        self.contentBlocks = contentBlocks
     }
 
     public var displayMarkdown: String { GrokMessageContent.markdown(text, sources: sources) }
@@ -149,9 +151,11 @@ public struct ReplyEvent: Sendable {
     public let reasoning: String?
     public let reasoningDuration: TimeInterval?
     public let failure: String?
+    public let contentBlocks: [ResponseContentBlock]
 
     public init(conversationID: String, responseID: String, text: String, isThinking: Bool = false, isFinal: Bool = false,
-                sources: [MessageSource] = [], attachments: [MessageAttachment] = [], reasoning: String? = nil, reasoningDuration: TimeInterval? = nil, failure: String? = nil) {
+                sources: [MessageSource] = [], attachments: [MessageAttachment] = [], reasoning: String? = nil, reasoningDuration: TimeInterval? = nil, failure: String? = nil,
+                contentBlocks: [ResponseContentBlock] = []) {
         self.conversationID = conversationID
         self.responseID = responseID
         self.text = text
@@ -162,6 +166,7 @@ public struct ReplyEvent: Sendable {
         self.reasoning = reasoning
         self.reasoningDuration = reasoningDuration
         self.failure = failure
+        self.contentBlocks = contentBlocks
     }
 }
 
