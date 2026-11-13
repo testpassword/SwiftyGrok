@@ -7,6 +7,7 @@ public enum ResponseContentBlock: Equatable, Sendable {
     case images(SearchedImageGallery)
     case weather(WeatherCard)
     case standings(SportsStandingsCard)
+    case unavailable(UnavailableResponseCard)
 
     var cardID: String? {
         switch self {
@@ -15,6 +16,7 @@ public enum ResponseContentBlock: Equatable, Sendable {
         case .images(let card): return "images-" + card.id
         case .weather(let card): return "weather-" + card.id
         case .standings(let card): return "sports-" + card.id
+        case .unavailable(let card): return card.cardID
         }
     }
 }
@@ -33,13 +35,12 @@ public struct ResponseCardContent: Equatable, Sendable {
         func flush() {
             if !text.isEmpty { blocks.append(.text(text)); text = "" }
         }
-        for chunk in chunks {
+        for (chunkIndex, chunk) in chunks.enumerated() {
             let content = CardJSON.object(chunk, "text")
+            let channel = (chunk["channel"] as? String ?? content["channel"] as? String ?? "").uppercased()
+            if ["THINKING", "ANALYSIS", "SUMMARY", "HEADER"].contains(where: channel.contains) { continue }
             if let fragment = content["text"] as? String {
-                let channel = (content["channel"] as? String ?? "").uppercased()
-                if !["THINKING", "ANALYSIS", "SUMMARY", "HEADER"].contains(where: channel.contains) {
-                    text += fragment
-                }
+                text += fragment
             }
             func append(_ block: ResponseContentBlock) {
                 flush()
@@ -47,17 +48,31 @@ public struct ResponseCardContent: Equatable, Sendable {
                     blocks[index] = block
                 } else { blocks.append(block) }
             }
-            let placesCard = CardJSON.object(chunk, "render_places", "renderPlaces")
-            if let id = CardJSON.string(placesCard, "id") {
-                var seen = Set<String>()
-                let places = (placesCard["locs"] as? [[String: Any]] ?? []).compactMap(PlaceCard.init).filter { seen.insert($0.id).inserted }
-                if !places.isEmpty { append(.gallery(PlaceGallery(id: id, places: places))) }
-            }
-            if let weather = WeatherCard(CardJSON.object(chunk, "render_weather", "renderWeather")) {
-                append(.weather(weather))
-            }
-            if let sports = SportsStandingsCard(CardJSON.object(chunk, "render_sports", "renderSports")) {
-                append(.standings(sports))
+            for key in chunk.keys.sorted() where key.hasPrefix("render_") || (key.hasPrefix("render") && key.dropFirst(6).first?.isUppercase == true) {
+                let value = chunk[key]!
+                let card = value as? [String: Any] ?? [:]
+                var rendered: ResponseContentBlock?
+                var recognized = true
+                switch key {
+                case "render_places", "renderPlaces":
+                    if let id = CardJSON.string(card, "id") {
+                        var seen = Set<String>()
+                        let places = (card["locs"] as? [[String: Any]] ?? []).compactMap(PlaceCard.init).filter { seen.insert($0.id).inserted }
+                        if !places.isEmpty { rendered = .gallery(PlaceGallery(id: id, places: places)) }
+                    }
+                case "render_weather", "renderWeather": rendered = WeatherCard(card).map(ResponseContentBlock.weather)
+                case "render_sports", "renderSports": rendered = SportsStandingsCard(card).map(ResponseContentBlock.standings)
+                case "render_searched_image", "renderSearchedImage":
+                    var imageCard = card
+                    imageCard["type"] = "render_searched_image"
+                    if let image = SearchedImage(imageCard) { rendered = .images(SearchedImageGallery(images: [image])) }
+                // Citations are rendered as links in answer text, not standalone widgets.
+                case "render_inline_citation", "renderInlineCitation": continue
+                default: recognized = false
+                }
+                append(rendered ?? .unavailable(UnavailableResponseCard(
+                    id: CardJSON.string(card, "id", "card_id", "cardId") ?? "chunk-\(chunkIndex)-\(key)",
+                    kind: key, rawData: UnavailableResponseCard.raw([key: value]), reason: recognized ? .invalidData : .unsupported)))
             }
         }
         flush()

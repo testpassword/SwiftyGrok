@@ -30,10 +30,22 @@ public struct GrokMessageContent {
     public let reasoningDuration: TimeInterval?
     public let failure: String?
     private let searchedImages: [String: SearchedImage]
+    private let renderCards: [String: [String: Any]]
+    private let outputChunks: [[String: Any]]
 
     public init(_ metadata: [String: AnyCodable]) {
         let json = metadata.mapValues { Self.unwrap($0) }
         searchedImages = SearchedImageContent.images(json["cardAttachmentsJson"])
+        var renderCards: [String: [String: Any]] = [:]
+        for value in json["cardAttachmentsJson"] as? [Any] ?? [] {
+            let card: [String: Any]?
+            if let string = value as? String, let data = string.data(using: .utf8) {
+                card = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            } else { card = value as? [String: Any] }
+            if let card, let id = CardJSON.string(card, "id", "cardId") { renderCards[id] = card }
+        }
+        self.renderCards = renderCards
+        outputChunks = json["outputChunks"] as? [[String: Any]] ?? []
         var sources: [MessageSource] = []
         for key in ["webSearchResults", "citedWebSearchResults"] {
             for (index, item) in Self.array(json[key]).enumerated() {
@@ -101,9 +113,22 @@ public struct GrokMessageContent {
     }
 
     public func contentBlocks(in text: String, merging blocks: [ResponseContentBlock] = []) -> [ResponseContentBlock] {
-        guard !searchedImages.isEmpty else { return blocks }
-        let result = SearchedImageContent.inserting(in: blocks.isEmpty ? [.text(text)] : blocks, images: searchedImages)
-        return result.contains(where: { if case .images = $0 { return true }; return false }) ? result : blocks
+        let chunks = blocks.isEmpty ? ResponseCardContent(chunks: outputChunks).blocks(matching: text) : blocks
+        let existing = Set(chunks.flatMap { block -> [String] in
+            if case .unavailable = block { return [] }
+            return block.renderedCardIDs
+        })
+        let images = SearchedImageContent.inserting(in: chunks.isEmpty ? [.text(text)] : chunks, images: searchedImages.filter { !existing.contains($0.key) })
+        let rendered = Set(images.flatMap { block -> [String] in
+            if case .unavailable = block { return [] }
+            return block.renderedCardIDs
+        })
+        let unique = images.filter { block in
+            if case .unavailable(let card) = block { return !rendered.contains(card.id) }
+            return true
+        }
+        let result = UnavailableResponseCard.inserting(in: unique, sources: sources, cards: renderCards)
+        return result.contains(where: { $0.cardID != nil }) ? result : []
     }
 
     public static func url(_ value: String?) -> URL? {

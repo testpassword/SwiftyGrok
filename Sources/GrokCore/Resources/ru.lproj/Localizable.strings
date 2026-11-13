@@ -372,3 +372,7 @@
 "Delete (%@)" = "Удалить (%@)";
 "Select chats" = "Выбрать чаты";
 "Image %@ of %@" = "Изображение %@ из %@";
+"This card type is not supported yet" = "Этот тип карточки пока не поддерживается";
+"Could not display this card" = "Не удалось отобразить карточку";
+"Card data was not received" = "Данные карточки не получены";
+"Raw card data" = "Исходные данные карточки";

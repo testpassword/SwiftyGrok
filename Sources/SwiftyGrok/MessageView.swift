@@ -131,17 +131,17 @@ import GrokCore
     }
 
     @ViewBuilder private var answerBody: some View {
-        if message.contentBlocks.isEmpty {
-            AssistantTextContent(text: message.text, sources: message.sources, media: media)
-        } else {
-            ForEach(Array(message.contentBlocks.enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .text(let text): AssistantTextContent(text: text, sources: message.sources, media: media)
-                case .gallery(let gallery): PlaceCardsView(gallery: gallery, media: media)
-                case .images(let gallery): SearchedImageGalleryView(gallery: gallery, media: media).id(gallery.id)
-                case .weather(let card): WeatherCardView(card: card).id(card.id)
-                case .standings(let card): SportsStandingsCardView(card: card).id(card.id)
-                }
+        let blocks = UnavailableResponseCard.inserting(
+            in: message.contentBlocks.isEmpty ? [.text(message.text)] : message.contentBlocks,
+            sources: message.sources, includeIncomplete: !isStreaming)
+        ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            switch block {
+            case .text(let text): AssistantTextContent(text: text, sources: message.sources, media: media)
+            case .gallery(let gallery): PlaceCardsView(gallery: gallery, media: media)
+            case .images(let gallery): SearchedImageGalleryView(gallery: gallery, media: media).id(gallery.id)
+            case .weather(let card): WeatherCardView(card: card).id(card.id)
+            case .standings(let card): SportsStandingsCardView(card: card).id(card.id)
+            case .unavailable(let card): UnavailableResponseCardView(card: card)
             }
         }
     }

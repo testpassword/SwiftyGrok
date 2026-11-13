@@ -1,6 +1,41 @@
 import SwiftUI
 import GrokCore
 
+@MainActor struct UnavailableResponseCardView: View {
+    let card: UnavailableResponseCard
+
+    private var title: String {
+        switch card.reason {
+        case .unsupported: return L10n.text("This card type is not supported yet")
+        case .invalidData: return L10n.text("Could not display this card")
+        case .missingData: return L10n.text("Card data was not received")
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, appSymbol: "rectangle.stack.badge.exclamationmark")
+                .font(.callout.weight(.medium)).foregroundStyle(.secondary)
+            Text(verbatim: card.kind).font(.system(size: 11, design: .monospaced)).foregroundStyle(.secondary)
+            DisclosureGroup(L10n.text("Raw card data")) {
+                VStack(alignment: .trailing, spacing: 8) {
+                    Button { ClipboardFeedback.shared.copy(card.rawData) } label: {
+                        Label(L10n.text("Copy code"), appSymbol: "doc.on.doc")
+                    }.buttonStyle(.borderless)
+                    ScrollView([.horizontal, .vertical]) {
+                        Text(verbatim: card.rawData).font(.system(size: 12, design: .monospaced))
+                            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                    }.frame(maxHeight: 220).background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                }.padding(.top, 8)
+            }
+            .font(.callout).disclosureGroupStyle(ClickableDisclosureStyle())
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.12)))
+    }
+}
+
 @MainActor struct WeatherCardView: View {
     let card: WeatherCard
     @State private var scale: WeatherCard.TemperatureScale

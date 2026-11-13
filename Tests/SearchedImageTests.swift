@@ -73,7 +73,10 @@ final class SearchedImageTests: XCTestCase {
         XCTAssertNil(gallery.images.first?.sourceURL)
         image["thumbnail"] = "https://user:secret@example.com/image"; card["image"] = image
         let invalid = GrokMessageContent(["cardAttachmentsJson": AnyCodable([card, "not-json", ["id": "missing-image"]])])
-        XCTAssertTrue(invalid.contentBlocks(in: SearchedImageFixtures.marker("one")).isEmpty)
+        let blocks = invalid.contentBlocks(in: SearchedImageFixtures.marker("one"))
+        XCTAssertTrue(SearchedImageFixtures.galleries(blocks).isEmpty)
+        guard case .unavailable(let card) = blocks.last else { return XCTFail("Invalid image disappeared") }
+        XCTAssertEqual(card.reason, .invalidData)
     }
 
     func testDuplicateMetadataUpdatesImageWithoutDuplicatingGalleryEntries() throws {

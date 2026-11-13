@@ -372,3 +372,7 @@
 "Delete (%@)" = "Delete (%@)";
 "Select chats" = "Select chats";
 "Image %@ of %@" = "Image %@ of %@";
+"This card type is not supported yet" = "This card type is not supported yet";
+"Could not display this card" = "Could not display this card";
+"Card data was not received" = "Card data was not received";
+"Raw card data" = "Raw card data";

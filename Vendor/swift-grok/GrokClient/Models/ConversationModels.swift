@@ -273,7 +273,7 @@ public struct Response: Codable {
         case metadata
         case webSearchResults, citedWebSearchResults, xposts, generatedImageUrls
         case imageAttachments, fileAttachments, fileAttachmentsMetadata, fileUris
-        case cardAttachmentsJson, streamErrors, thinkingTrace, reasoningTrace, steps, traceSteps, thinkingStartTime, thinkingEndTime
+        case cardAttachmentsJson, outputChunks, streamErrors, thinkingTrace, reasoningTrace, steps, traceSteps, thinkingStartTime, thinkingEndTime
     }
 
     public init(from decoder: Decoder) throws {
@@ -346,7 +346,7 @@ public struct Response: Codable {
     private static let contentKeys: [CodingKeys] = [
         .webSearchResults, .citedWebSearchResults, .xposts, .generatedImageUrls,
         .imageAttachments, .fileAttachments, .fileAttachmentsMetadata, .fileUris,
-        .cardAttachmentsJson, .streamErrors, .thinkingTrace, .reasoningTrace, .steps, .traceSteps, .thinkingStartTime, .thinkingEndTime
+        .cardAttachmentsJson, .outputChunks, .streamErrors, .thinkingTrace, .reasoningTrace, .steps, .traceSteps, .thinkingStartTime, .thinkingEndTime
     ]
 
     private static func decodeFirstString(
